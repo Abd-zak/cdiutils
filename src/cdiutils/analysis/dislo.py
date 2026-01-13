@@ -7,6 +7,7 @@ from cdiutils.utils import hybrid_gradient, nan_to_zero, zero_to_nan
 import matplotlib.pyplot as plt
 from cdiutils.plot import plot_volume_slices
 from cdiutils.utils import fill_up_support
+from matplotlib import rcParams
 
 def save_to_vti(
     filename,
@@ -216,7 +217,12 @@ def map_min_gradient(
                                         "displacement_gradient_min_z"            ,"displacement_gradient_0_z"            ,"strain_mask","strain_amp"),
                        amplitude_threshold=0.1,    )
     if plot_debug:
-        
+        rcParams['font.size'] = font_size
+        rcParams.update({
+            'font.weight': 'bold',
+            'axes.titleweight': 'bold',
+            'axes.labelweight': 'bold',"savefig.bbox": "tight",
+        })
         figure, _=plot_volume_slices(
             zero_to_nan(phase_0),
             plot_type='contourf',
@@ -265,11 +271,9 @@ def map_min_gradient(
             );
         if save_plot:
             figure.savefig(path_to_save+"plus_gradientphase.png")
+        rcParams['font.size'] = 12
 
     return nan_to_zero(strain_mask), nan_to_zero(strain_amp)
-
-
-
 
 
 def clusters_dislo_strain_map(
@@ -278,7 +282,7 @@ def clusters_dislo_strain_map(
     distance_threshold=10.0, 
     cylinder_radius=3.0, num_spline_points=1000,
     smoothing_param=2, eps=2.0, min_samples=5, 
-    save_output=True, debug_plot=True
+    save_output=True, debug_plot=True,font_size=12,
     ):
     import numpy as np
     from scipy.ndimage import label
@@ -376,6 +380,12 @@ def clusters_dislo_strain_map(
     final_labeled_clusters, num_final_clusters = label(cylindrical_mask > 0) 
 
     if debug_plot:
+        rcParams['font.size'] = font_size
+        rcParams.update({
+            'font.weight': 'bold',
+            'axes.titleweight': 'bold',
+            'axes.labelweight': 'bold',"savefig.bbox": "tight",
+        })
         frames = []
         fig = plt.figure()
         ax = fig.add_subplot(111, projection="3d")
@@ -409,6 +419,7 @@ def clusters_dislo_strain_map(
         gif_path = save_path + "_Step1_refined_dislocation_clustering_and_processing.gif"
         imageio.mimsave(gif_path, frames, fps=10)
         print(f"Saved debug GIF to {gif_path}")
+        rcParams['font.size'] = 12
 
     return final_labeled_clusters, num_final_clusters
 
@@ -446,8 +457,6 @@ def generate_filled_cylinder(shape, centroid, direction, radius, height, step=1)
 
     return volume
 
-
-
 def plot_phase_around_dislo(
         amp,phase,selected_dislocation_data,r,dr, centroid, direction,  
         slice_thickness=1,
@@ -473,8 +482,6 @@ def plot_phase_around_dislo(
                        tuple_array=(nan_to_zero(amp),nan_to_zero(phase),selected_dislocation_data,circular_mask,polar_angles,vect_x,vect_y,vect_z),
                        tuple_fieldnames=("density", "phase","dislo", "circular_mask", "polar_angles", "vect_x", "vect_y", "vect_z" ),amplitude_threshold=0.01,)
     return masked_region_phase,polar_angles,circular_mask,displacement_vectors,direction
-
-
 def create_circular_mask(
         data_shape, 
         centroid, 
@@ -555,7 +562,6 @@ def create_circular_mask(
     displacement_vectors.reshape(-1, 3)[circular_mask_flat] = displacement_vectors_flat  # Assign vectors
 
     return circular_mask, polar_angles_masked, displacement_vectors,direction
-
 def remove_large_jumps(x, y, threshold_factor=1.5):
     """
     Removes points with large jumps in the y-data based on a threshold.
@@ -630,7 +636,8 @@ def dislo_process_phase_ring(
         filter_by_slope=False,
         plot_debug=False, 
         save_path=None,
-        period_jump=360
+        period_jump=360,font_size=12,
+        figsize =(12, 18),markersize = 10, linewidth=1
         ):
     
     """
@@ -857,46 +864,69 @@ def dislo_process_phase_ring(
     window_length = min(100, len(phase_final) - 1)
     if window_length % 2 == 0:
         window_length -= 1
-    phase_ring_1_smooth_sinu = center_angles(savgol_filter(phase_sinu, window_length=window_length, polyorder=min(poly_order, window_length-1)))
+    phase_ring_1_smooth_sinu = center_angles(
+        savgol_filter(
+            phase_sinu, 
+            window_length=window_length, 
+            polyorder=min(poly_order, window_length-1)
+            )
+        )
     phase_ring_1_smooth      = phase_ring_1_smooth_sinu + slope * angle_ring
 
 
     ### --- Debug Plotting --- ###
     if plot_debug:
-        fig, axes = plt.subplots(6, 1, figsize=(12, 18), sharex=True)
+        rcParams['font.size'] = font_size
+        rcParams.update({
+            'font.weight': 'bold',
+            'axes.titleweight': 'bold',
+            'axes.labelweight': 'bold',"savefig.bbox": "tight",
+        })
+        fig, axes = plt.subplots(6, 1, figsize=figsize, sharex=True)
 
-        axes[0].plot(angle_raw, phase_raw, ">", label="Raw Phase", color="black", alpha=0.7, linewidth=3)
+        axes[0].plot(angle_raw, phase_raw, ">", label="Raw Phase", color="black",
+                      alpha=0.7, linewidth=linewidth)
         if jump_filter_ML:
-            axes[0].plot(angle_raw[~sel___], phase_raw[~sel___], ".", label="Filtered Out", color="red", alpha=0.7, linewidth=3,markersize=10) # type: ignore
+            axes[0].plot(angle_raw[~sel___], phase_raw[~sel___], ".", label="Filtered Out", color="red",
+                         alpha=0.7, linewidth=linewidth,markersize=markersize) # type: ignore
         
         axes[0].set_title("Raw Phase Data")
         axes[0].legend()
 
-        axes[1].plot(angle_ring, phase_final, ">", label="Processed Phase", color="blue", alpha=0.7, linewidth=3)
+        axes[1].plot(angle_ring, phase_final, ">", label="Processed Phase", color="blue",
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
         axes[1].set_title("Processed Phase (Unwrapped & Centered)")
         axes[1].legend()
 
-        axes[2].plot(angle_ring, phase_ring_1_smooth, ">", label="Smoothed Phase", color="red", alpha=0.7, linewidth=3)
+        axes[2].plot(angle_ring, phase_ring_1_smooth, ">", label="Smoothed Phase", color="red",
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
         axes[2].set_title("Smoothed Phase (Savitzky-Golay)")
         axes[2].legend()
 
-        axes[3].plot(angle_ring, phase_sinu, ">", label="Phase Sinusoidal Deviation", color="green", alpha=0.7, linewidth=3)
+        axes[3].plot(angle_ring, phase_sinu, ">", label="Phase Sinusoidal Deviation", color="green",
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
         poly_eq_str = " + ".join([f"{coef:.2f} $\\theta^{i}$" for i, coef in enumerate(poly_coeffs[::-1])])
         axes[3].set_title(f"Phase Sinusoidal Deviation (Trend Removed: {poly_eq_str})")
         axes[3].legend()
 
         # Overlay all plots
-        axes[4].plot(angle_raw , phase_raw          ,">-", label="Raw Phase", color="black", alpha=0.5, linewidth=2)
-        axes[4].plot(angle_ring, phase_final        ,">-", label="Processed Phase", color="blue", alpha=0.6, linewidth=3)
-        axes[4].plot(angle_ring, phase_ring_1_smooth,">-", label="Smoothed Phase", color="red", alpha=0.7, linewidth=4)
+        axes[4].plot(angle_raw , phase_raw          ,">-", label="Raw Phase", color="black", 
+                     alpha=0.5, linewidth=2,markersize=markersize)
+        axes[4].plot(angle_ring, phase_final        ,">-", label="Processed Phase", color="blue", 
+                     alpha=0.6, linewidth=linewidth,markersize=markersize)
+        axes[4].plot(angle_ring, phase_ring_1_smooth,">-", label="Smoothed Phase", color="red", 
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
         axes[4].set_title("All Phase Data Overlaid")
         axes[4].legend()
 
         # **NEW PLOT: Displacement Vectors as Quiver**
         displacement_magnitudes = np.linalg.norm(displacement_vectors_final, axis=1)
-        axes[5].plot(angle_ring, displacement_vectors_final[...,0], ">", label="Displacement Vector X", alpha=0.7, linewidth=3)
-        axes[5].plot(angle_ring, displacement_vectors_final[...,1], "<", label="Displacement Vector Y", alpha=0.7, linewidth=3)
-        axes[5].plot(angle_ring, displacement_vectors_final[...,2], "^", label="Displacement Vector Z", alpha=0.7, linewidth=3)
+        axes[5].plot(angle_ring, displacement_vectors_final[...,0], ">", label="Displacement Vector X", 
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
+        axes[5].plot(angle_ring, displacement_vectors_final[...,1], "<", label="Displacement Vector Y", 
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
+        axes[5].plot(angle_ring, displacement_vectors_final[...,2], "^", label="Displacement Vector Z", 
+                     alpha=0.7, linewidth=linewidth,markersize=markersize)
         
         axes[5].set_title("Displacement Vector Magnitudes vs. Angle")
         axes[5].set_ylabel("Vector Magnitude")
@@ -907,5 +937,548 @@ def dislo_process_phase_ring(
         if save_path is not None:
             plt.savefig(save_path)
         plt.show()
+        rcParams['font.size'] = 12
 
     return (angle_raw, phase_raw, angle_ring, phase_final, phase_ring_1_smooth,phase_sinu, displacement_vectors_ring_sorted, displacement_vectors_final)
+
+def transform_known_vector_to_crystallographic(vx, vy, vz, R):
+    """
+    Transforms a given vector (vx, vy, vz) from the original frame to the crystallographic basis.
+
+    Args:
+        vx: X-component of the vector in the original frame (can be scalar or array)
+        vy: Y-component of the vector in the original frame (can be scalar or array)
+        vz: Z-component of the vector in the original frame (can be scalar or array)
+        R: 3x3 rotation matrix that maps the original frame to the crystallographic basis.
+
+    Returns:
+        - Transformed vector components (vx_cryst, vy_cryst, vz_cryst) in the crystallographic basis.
+    """
+    import numpy as np
+
+    # Stack vector components into a matrix form
+    original_vector = np.array([vx, vy, vz]).reshape(3, -1)
+
+    # Apply the rotation matrix (no translation)
+    transformed_vector = R @ original_vector
+
+    # Extract transformed components
+    vx_cryst = transformed_vector[0].squeeze()
+    vy_cryst = transformed_vector[1].squeeze()
+    vz_cryst = transformed_vector[2].squeeze()
+
+    return vx_cryst, vy_cryst, vz_cryst
+def normalize_vectors_3d(vx, vy, vz):
+    """
+    Normalizes a set of vectors given their X, Y, and Z components.
+
+    Args:
+        vx: X-component of vectors (array or scalar)
+        vy: Y-component of vectors (array or scalar)
+        vz: Z-component of vectors (array or scalar)
+
+    Returns:
+        - Normalized vector components (vx_norm, vy_norm, vz_norm)
+    """
+    import numpy as np
+
+    # Convert to numpy arrays if inputs are scalars
+    vx, vy, vz = np.asarray(vx), np.asarray(vy), np.asarray(vz)
+
+    # Compute vector magnitudes
+    magnitudes = np.sqrt(vx**2 + vy**2 + vz**2)
+
+    # Avoid division by zero (if magnitude is 0, set to 1 to prevent NaN)
+    magnitudes = np.where(magnitudes == 0, 1, magnitudes)
+
+    # Normalize each component
+    vx_norm = vx / magnitudes
+    vy_norm = vy / magnitudes
+    vz_norm = vz / magnitudes
+
+    return vx_norm, vy_norm, vz_norm
+def closest_to_zero_in_array(vec):
+    vec = np.asarray(vec)  # Ensure it's a NumPy array
+    idx = np.argmin(np.abs(vec))  # Index of the value closest to zero
+    return vec[idx], idx
+
+def normalize_vector(v):
+    """
+    Normalize a vector to unit length.
+
+    Parameters
+    ----------
+    v : array_like
+        Input vector. Must have non-zero magnitude.
+
+    Returns
+    -------
+    numpy.ndarray
+        Unit vector in the direction of `v`.
+
+    Raises
+    ------
+    ValueError
+        If the input vector has zero magnitude.
+
+    Notes
+    -----
+    This function performs an ℓ2 (Euclidean) normalization using
+    ``np.linalg.norm``. The direction of the vector is preserved.
+
+    Examples
+    --------
+    >>> normalize_vector([3, 0, 4])
+    array([0.6, 0. , 0.8])
+    """
+    return v / np.linalg.norm(v)
+def project_vector(v, t):
+    """
+    Compute the component of vector `v` perpendicular to vector `t`.
+
+    This function removes the projection of `v` along `t`:
+        v_perp = v - (v · t / ||t||²) t
+
+    Parameters
+    ----------
+    v : array_like
+        Input vector to be projected.
+    t : array_like
+        Reference vector defining the direction to be removed.
+        Must be non-zero.
+
+    Returns
+    -------
+    numpy.ndarray
+        Component of `v` perpendicular to `t`.
+
+    Raises
+    ------
+    ValueError
+        If `t` has zero magnitude.
+
+    Notes
+    -----
+    The function does not normalize the output. If a unit vector is required,
+    apply `normalize_vector` to the result.
+
+    Examples
+    --------
+    >>> project_vector([1, 1, 0], [1, 0, 0])
+    array([0., 1., 0.])
+    """
+    v = np.array(v, dtype=np.float64)  # Ensure `v` is a NumPy array
+    t = np.array(t, dtype=np.float64)  # Ensure `t` is a NumPy array
+    return v - (np.dot(v, t) / np.linalg.norm(t)**2) * t
+
+## Compute the theoretical phase due to a dislocation.
+def dislo_phase_model(theta, t, G, b, nu=0.3, fact=-1, r=1.0, print_debug=False,only_theta_dep=True,print_debug_u=False,align_theta=None):
+    """
+    Compute the theoretical phase shift due to a dislocation.
+
+    Parameters:
+    - theta: np.ndarray or float, polar angle(s) in radians
+    - t: (3,) array, dislocation line direction
+    - G: (3,) array, reciprocal lattice vector
+    - b: (3,) array, Burgers vector
+    - nu: float, Poisson's ratio (default = 0.3)
+    - d_hkl: float, Interplanar spacing (default = 0.39239)
+    - r: np.ndarray or float, radial distance(s) from dislocation core
+    - print_debug: bool, whether to print debug information
+
+    Returns:
+    - u_final: np.ndarray, theoretical phase shift
+    """
+
+    # Convert inputs to NumPy arrays and ensure correct shape
+    t = np.asarray(t, dtype=np.float64).reshape(-1)  
+    G = np.asarray(G, dtype=np.float64).reshape(-1)
+    b = np.asarray(b, dtype=np.float64).reshape(-1)
+    theta = np.asarray(theta, dtype=np.float64)
+    r = np.asarray(r, dtype=np.float64)
+        
+    # Compute perpendicular component of Burgers vector
+    b_perp = project_vector(b, t)
+    b_paral= b - b_perp
+    b_par_normalized = normalize_vector(b_paral)
+    b_perp_norm = np.linalg.norm(b_perp)
+    if align_theta is not None:
+        # here we need the reference of the exp  : means the vector from the center to the point in the ring at theta 0 (in another word the x axis of the experiment of the ring in crystallographic basis)
+        theta_shift     = signed_angle_3d(b_perp,align_theta,b_par_normalized)
+        theta_shift_rad=np.deg2rad(theta_shift)
+        if print_debug:
+            print(f" the bper is off by {theta_shift} ° from the experimental reference")
+        theta+=theta_shift_rad
+    b_screw = np.dot(b, t / np.linalg.norm(t))
+
+    if print_debug:
+        print(f"b_perp: {b_perp}, b_perp_norm: {b_perp_norm}")
+        print(f"b_screw: {b_paral}  b_screw_norm: {b_screw}")
+
+    if np.isclose(b_perp_norm, 0) and print_debug:
+        print("Warning: b_perp is zero, phase shift will be zero.")
+    
+    # Compute displacement fields
+    if only_theta_dep:
+        u_x_theo = (b_perp_norm / (2 * np.pi)) * (theta + np.sin(2 * theta) / (4 * (1 - nu)))
+        u_y_theo = -(b_perp_norm / (8 * np.pi * (1 - nu))) * (np.cos(2 * theta))
+        u_z_theo = (b_screw / (2 * np.pi)) * theta
+
+    else:
+        u_x_theo = (b_perp_norm / (2 * np.pi)) * (theta + np.sin(2 * theta) / (4 * (1 - nu)))
+        u_y_theo = -(b_perp_norm / (8 * np.pi * (1 - nu))) * (2 * (1 - 2 * nu) * np.log(r) + np.cos(2 * theta))
+        u_z_theo = (b_screw / (2 * np.pi)) * theta
+
+    if print_debug_u:
+        print(f"u_x_theo: {u_x_theo}, u_y_theo: {u_y_theo}, u_z_theo: {u_z_theo}")
+
+    # Compute rotation matrix from real space to dislocation frame
+    R = dislo_rotation_matrix_real_to_theo(t, b)
+
+    if print_debug:
+        print(f"Rotation matrix R:\n{R}")
+
+    # Rotate G vector
+    G_theo = np.dot(R, G)
+
+    if print_debug:
+        print(f"G_theo: {G_theo}")
+
+    # Compute phase shift
+    u_final = fact * (G_theo[0] * u_x_theo + G_theo[1] * u_y_theo + G_theo[2] * u_z_theo)
+
+    if print_debug_u:
+        print(f"Final Phase Shift: {u_final}")
+
+    return u_final
+## utils for dislo_phase_model
+def dislo_rotation_matrix_real_to_theo(t, b):
+    """
+    Compute the rotation matrix from the real (laboratory or crystal) frame
+    to the dislocation (theoretical) frame.
+
+    The dislocation frame is defined as:
+    - ẑ aligned with the dislocation line direction `t`,
+    - x̂ aligned with the edge component of the Burgers vector, i.e. the
+      component of `b` perpendicular to `t`,
+    - ŷ completing a right-handed orthonormal basis (ŷ = ẑ × x̂).
+
+    Parameters
+    ----------
+    t : array_like, shape (3,)
+        Dislocation line direction vector in real space. Must be non-zero.
+    b : array_like, shape (3,)
+        Burgers vector in real space.
+
+    Returns
+    -------
+    numpy.ndarray, shape (3, 3)
+        Rotation matrix `R` whose rows correspond to the unit vectors
+        (x̂, ŷ, ẑ) of the dislocation frame expressed in the real-space
+        coordinate system. A vector `v_real` can be transformed to the
+        dislocation frame via:
+            v_theo = R @ v_real
+
+    Notes
+    -----
+    - If the Burgers vector is parallel to the dislocation line
+      (pure screw dislocation), the perpendicular component vanishes.
+      In this case, an arbitrary direction perpendicular to `t` is chosen
+      to define x̂.
+    - The resulting basis is orthonormal and right-handed.
+    - The accuracy of the rotation depends on the numerical stability of
+      the normalization and projection operations.
+
+    Examples
+    --------
+    >>> t = [0, 0, 1]
+    >>> b = [1, 0, 0]
+    >>> R = dislo_rotation_matrix_real_to_theo(t, b)
+    >>> R.shape
+    (3, 3)
+    """
+    # 1) ẑ = t̂ = t / ||t||
+    t_hat = normalize_vector(t)  # new z-axis
+
+    # 2) b_perp = b - (b·t̂) t̂  (the component of b perpendicular to t)
+    b_perp = project_vector(b, t)
+    b_perp_norm = np.linalg.norm(b_perp)
+
+    # 3) x̂ = b_perp / ||b_perp||  (edge direction) unless b_perp=0 => pick any perpendicular
+    if b_perp_norm < 1e-10:
+        # Choose an arbitrary x-axis perpendicular to t
+        temp = np.array([1.0, 0.0, 0.0])
+        x_prime = temp - np.dot(temp, t_hat) * t_hat
+        x_prime = normalize_vector(x_prime)
+    else:
+        x_prime = b_perp/b_perp_norm
+
+    # 4) ŷ = ẑ × x̂  (right-hand rule)
+    y_prime = normalize_vector(np.cross(t_hat, x_prime))
+
+    # 5) R has rows = [x̂, ŷ, ẑ]
+    R = np.array([x_prime, y_prime, t_hat])
+    return R
+def signed_angle_3d(u, v, normal):
+    """
+    Compute the signed angle (in degrees) between two 3D vectors `u` and `v`,
+    measured around a specified `normal` axis direction.
+
+    The sign of the angle is determined by the direction of the cross product
+    of `u` and `v` relative to `normal`. 
+    - Positive if the rotation from `u` to `v` is counterclockwise around `normal`.
+    - Negative if the rotation is clockwise.
+
+    Args:
+        u (array-like): First 3D vector (starting vector).
+        v (array-like): Second 3D vector (ending vector).
+        normal (array-like): 3D vector defining the rotation axis (normal to the rotation plane).
+
+    Returns:
+        float: Signed angle in degrees.
+
+    Example:
+        >>> u = np.array([1, 0, 0])
+        >>> v = np.array([0, 1, 0])
+        >>> normal = np.array([0, 0, 1])
+        >>> signed_angle_3d(u, v, normal)
+        90.0
+
+        >>> signed_angle_3d(v, u, normal)
+        -90.0
+    """
+    u = np.array(u)
+    v = np.array(v)
+    normal = np.array(normal)
+
+    angle = angle_between_vectors(u, v)
+    cross = np.cross(u, v)
+    sign = np.sign(np.dot(cross, normal))
+    return angle * sign
+def angle_between_vectors(u, v):
+    """
+    Compute the angle between two vectors in Euclidean space.
+
+    The angle is calculated using the dot product formula:
+        cos(θ) = (u · v) / (||u|| ||v||)
+    and returned in degrees.
+
+    Parameters
+    ----------
+    u : sequence of float
+        First input vector. Must be a non-zero vector.
+    v : sequence of float
+        Second input vector. Must be a non-zero vector.
+
+    Returns
+    -------
+    float
+        Angle between vectors `u` and `v` in degrees, in the range [0, 180].
+
+    Raises
+    ------
+    ValueError
+        If either vector has zero magnitude.
+
+    Notes
+    -----
+    The function assumes that `u` and `v` have the same dimensionality.
+    Numerical errors may occur if the dot product divided by the product
+    of magnitudes is slightly outside the interval [-1, 1].
+
+    Examples
+    --------
+    >>> angle_between_vectors([1, 0, 0], [0, 1, 0])
+    90.0
+    >>> angle_between_vectors([1, 0], [1, 0])
+    0.0
+    """
+    import math
+
+    # Calculate dot product
+    dot_product = sum(u_i * v_i for u_i, v_i in zip(u, v))
+    
+    # Calculate magnitudes
+    magnitude_u = math.sqrt(sum(u_i**2 for u_i in u))
+    magnitude_v = math.sqrt(sum(v_i**2 for v_i in v))
+    
+    # Calculate angle in radians and then convert to degrees
+    angle_radians = math.acos(dot_product / (magnitude_u * magnitude_v))
+    angle_degrees = math.degrees(angle_radians)
+    
+    return angle_degrees
+
+## utils phase decomposition
+def decompose_experimental_phase(theta, phi_exp):
+    """
+    Decompose an experimental phase signal into linear, low-frequency,
+    and second-harmonic (2θ) oscillatory components.
+
+    The procedure consists of:
+    1) Removing a global linear trend from the experimental phase.
+    2) Fitting and subtracting low-frequency angular components
+       (cos θ, sin θ, and constant offset).
+    3) Isolating and fitting the second-harmonic oscillation
+       (cos 2θ, sin 2θ).
+    4) Reconstructing filtered phase components with proper angular
+       centering.
+
+    Parameters
+    ----------
+    theta : array_like
+        Angular coordinate (in radians) at which the phase is sampled.
+    phi_exp : array_like
+        Experimental phase values corresponding to `theta`.
+
+    Returns
+    -------
+    f_oscillation_final : numpy.ndarray
+        Experimental phase after removal of low-frequency components,
+        retaining the dominant oscillatory content and linear trend.
+    f_fitoscillation_final : numpy.ndarray
+        Fitted second-harmonic (cos 2θ, sin 2θ) oscillatory component,
+        centered in angular space.
+    coeffs : numpy.ndarray
+        Least-squares coefficients for the second-harmonic fit
+        [A_cos2θ, A_sin2θ].
+    f_linear : numpy.ndarray
+        Linear trend reconstructed from the filtered phase.
+    coeffs_linear : numpy.ndarray
+        Coefficients of the final linear fit [slope, intercept].
+
+    Notes
+    -----
+    - Least-squares fitting is performed using ``np.linalg.lstsq``.
+    - Low-frequency contributions (cos θ, sin θ, constant) are explicitly
+      removed to avoid contamination of the 2θ harmonic.
+    - The function assumes that `theta` and `phi_exp` have the same shape.
+    - The function `center_angles` is expected to wrap or center angular
+      phase values consistently within a chosen interval (e.g. [-π, π]).
+
+    Examples
+    --------
+    >>> f_phase, f_fit2theta, coeffs2, f_lin, lin_coeffs = \
+    ...     decompose_experimental_phase(theta, phi_exp)
+    """
+    coeffs_linear = np.polyfit(theta, phi_exp, 1)
+    f_linear = np.polyval(coeffs_linear, theta)
+    f_oscillation_0 = phi_exp - f_linear
+
+    X_full = np.column_stack([
+        np.cos(theta),
+        np.sin(theta),
+        np.cos(2 * theta),
+        np.sin(2 * theta),
+        np.ones_like(theta)
+    ])
+    coeffs, *_ = np.linalg.lstsq(X_full, f_oscillation_0, rcond=None)
+    low_freq_fit = X_full[:, [0, 1, 4]] @ coeffs[[0, 1, 4]]
+    f_oscillation_final = center_angles(f_oscillation_0 - low_freq_fit)
+    f_filterlowfreq_final = f_oscillation_final + f_linear
+    coeffs_linear = np.polyfit(theta, f_filterlowfreq_final, 1)
+    f_linear = np.polyval(coeffs_linear, theta)
+    f_oscillation_final= f_filterlowfreq_final
+    
+    X_full = np.column_stack([
+        np.cos(2 * theta),
+        np.sin(2 * theta),
+    ])
+    coeffs, *_ = np.linalg.lstsq(X_full, f_oscillation_0, rcond=None)
+    high_freq_fit = X_full@ coeffs
+    f_fitoscillation_final = center_angles(high_freq_fit)
+    return f_oscillation_final, f_fitoscillation_final, coeffs,f_linear,coeffs_linear
+# plotting
+def plot_phase_data_comparison_exp_to_theo(
+    exp_angle,
+    exp_phase,
+    theo_phases,
+    labels,
+    save_path=None,
+    marker_size=5,
+    line_width=5,
+    alpha=0.7,
+    ref_band=0.1,
+    show_band=True,
+    figsize=(9, 5),
+    band_theo=False,show_slope=False,
+    filter_low_freq=True,fix_exp_slope=None,font_size=12,
+    offset_theta=None,ncol =3,
+):
+    rcParams['font.size'] = font_size
+    rcParams.update({
+        'font.weight': 'bold',
+        'axes.titleweight': 'bold',
+        'axes.labelweight': 'bold',"savefig.bbox": "tight",
+    })
+    # Preprocess experimental phase
+    filtred_phase, filter_fit, _, f_linear, coeffs_linear = decompose_experimental_phase(exp_angle, exp_phase)
+    slope_exp,intercept_exp= coeffs_linear
+    if fix_exp_slope is not None:
+        slope_exp   = fix_exp_slope 
+        f_linear = slope_exp * exp_angle + intercept_exp
+        
+    y_exp = filtred_phase - f_linear if filter_low_freq else exp_phase - f_linear
+
+    if offset_theta is None:
+        offset_theta = 0
+    # Setup 2-row subplot (main + residual)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True,
+                                   gridspec_kw={'height_ratios': [3, 1]})
+    # === MAIN PLOT ===
+    if show_slope:
+        exp_legend = f'Exp (slope={slope_exp:.2f})'
+    else:
+        exp_legend = 'Exp'
+
+    h_exp = ax1.plot(exp_angle - offset_theta, y_exp, "^", markersize=marker_size,
+                     label=exp_legend, color='black', alpha=alpha)[0]
+    if show_band:
+        ax1.fill_between(exp_angle - offset_theta, y_exp - ref_band, y_exp + ref_band,
+                         color='gray', alpha=0.2)
+    handles = [h_exp]
+    labels_all = [exp_legend]
+
+    for i, theo_phase in enumerate(theo_phases):
+        predicted_phase, pred_fit, _, f_linear_theo, coeffs_linear = decompose_experimental_phase(exp_angle, theo_phase)
+        y_theo = predicted_phase - f_linear_theo if filter_low_freq else theo_phase - f_linear_theo
+        slope_theo,intercept_theo= coeffs_linear
+        if show_slope:
+            theo_legend= labels[i] + f' (slope={slope_theo:.2f})'
+        else: 
+            theo_legend= labels[i]
+
+        line, = ax1.plot(exp_angle - offset_theta, y_theo, "-", linewidth=line_width,
+                         label=theo_legend, alpha=alpha)
+        handles.append(line)
+        labels_all.append(theo_legend)
+
+        if show_band and band_theo:
+            ax1.fill_between(exp_angle - offset_theta, y_theo - ref_band, y_theo + ref_band,
+                             color=line.get_color(), alpha=0.2)
+
+        # === RESIDUAL SUBPLOT ===
+        y_diff = center_angles(y_exp - y_theo)
+        ax2.plot(exp_angle - offset_theta, y_diff, "-", linewidth=line_width,
+                 color=line.get_color(), alpha=alpha)
+
+    # === Styling for Main Plot ===
+    ax1.set_ylabel("Phase Residual (rad)")
+    ax1.grid(True, linestyle="--", alpha=0.5)
+    ax1.tick_params(labelsize=font_size - 2)
+
+    # === Styling for Residual Subplot ===
+    ax2.set_xlabel("Polar Angle (rad)")
+    ax2.set_ylabel("Diff.")
+    ax2.grid(True, linestyle="--", alpha=0.4)
+    ax2.tick_params(labelsize=font_size - 2)
+
+    # === Unified Legend Above Plots ===
+    fig.legend(handles, labels_all, loc='upper center',
+               frameon=False, ncol=ncol, bbox_to_anchor=(0.5, 1.12))
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    rcParams['font.size'] = 12
+
+    plt.show()
