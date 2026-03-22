@@ -114,6 +114,7 @@ import tempfile
 import threading
 import time
 import traceback
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -158,6 +159,9 @@ except Exception as e:
     raise RuntimeError(
         "MP4 export requires imageio-ffmpeg. Install with: pip install imageio-ffmpeg"
     ) from e
+
+warnings.filterwarnings("ignore", message="Mean of empty slice")
+warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 
 # =========================
 # Constants
@@ -2545,161 +2549,168 @@ class MultiVolumeViewer(widgets.Box):
             Per-action execution report.
         """
         results = []
+        self._batch_edit = True
 
-        for i, spec in enumerate(actions):
-            try:
-                action = spec["action"]
+        try:
+            for i, spec in enumerate(actions):
+                try:
+                    action = spec["action"]
 
-                if action == "show":
-                    layer = self._resolve_layer_name(spec["layer"])
-                    self._visible_cb[layer].value = True
+                    if action == "show":
+                        layer = self._resolve_layer_name(spec["layer"])
+                        self._visible_cb[layer].value = True
 
-                elif action == "hide":
-                    layer = self._resolve_layer_name(spec["layer"])
-                    self._visible_cb[layer].value = False
+                    elif action == "hide":
+                        layer = self._resolve_layer_name(spec["layer"])
+                        self._visible_cb[layer].value = False
 
-                elif action == "select_edit":
-                    layer = self._resolve_layer_name(spec["layer"])
-                    self._select_edit_layer(layer)
+                    elif action == "select_edit":
+                        layer = self._resolve_layer_name(spec["layer"])
+                        self._select_edit_layer(layer)
 
-                elif action == "edit":
-                    layer = self._resolve_layer_name(spec["layer"])
-                    params = spec.get("params", {})
-                    self._apply_layer_params(layer, params)
-                elif action == "create_slice":
-                    self.add_layer_kind.value = "slice"
-                    self.add_layer_name.value = spec["name"]
-                    self.add_slice_axis.value = spec.get("axis", "z")
+                    elif action == "edit":
+                        layer = self._resolve_layer_name(spec["layer"])
+                        params = spec.get("params", {})
+                        self._apply_layer_params(layer, params)
+                    elif action == "create_slice":
+                        self.add_layer_kind.value = "slice"
+                        self.add_layer_name.value = spec["name"]
+                        self.add_slice_axis.value = spec.get("axis", "z")
 
-                    if spec.get("center_pos", False):
-                        self._on_center_slice_pos_clicked(None)
-                    else:
-                        self.add_slice_pos.value = int(spec.get("pos", 0))
+                        if spec.get("center_pos", False):
+                            self._on_center_slice_pos_clicked(None)
+                        else:
+                            self.add_slice_pos.value = int(spec.get("pos", 0))
 
-                    self.add_slice_thickness.value = int(
-                        spec.get("thickness", 0)
-                    )
-                    self._on_create_layer_clicked(None)
+                        self.add_slice_thickness.value = int(
+                            spec.get("thickness", 0)
+                        )
+                        self._on_create_layer_clicked(None)
 
-                elif action == "create_plane":
-                    self.add_layer_kind.value = "plane"
-                    self.add_layer_name.value = spec["name"]
-                    n = spec.get("normal", [0.0, 0.0, 1.0])
-                    o = spec.get("origin", [0.0, 0.0, 0.0])
-                    (
-                        self.add_plane_nx.value,
-                        self.add_plane_ny.value,
-                        self.add_plane_nz.value,
-                    ) = map(float, n)
-                    (
-                        self.add_plane_ox.value,
-                        self.add_plane_oy.value,
-                        self.add_plane_oz.value,
-                    ) = map(float, o)
-                    self.add_plane_offset.value = float(
-                        spec.get("offset", 0.0)
-                    )
-                    self.add_plane_thickness.value = float(
-                        spec.get("thickness", 0.0)
-                    )
-                    self.add_plane_extent.value = float(
-                        spec.get("extent", self.add_plane_extent.value)
-                    )
-                    self._on_create_layer_clicked(None)
-
-                elif action == "create_clip":
-                    self.add_layer_kind.value = "clip"
-                    self.add_layer_name.value = spec["name"]
-                    self.add_clip_source.value = spec["source"]
-                    n = spec.get("normal", [0.0, 0.0, 1.0])
-                    o = spec.get("origin", [0.0, 0.0, 0.0])
-                    (
-                        self.add_plane_nx.value,
-                        self.add_plane_ny.value,
-                        self.add_plane_nz.value,
-                    ) = map(float, n)
-                    (
-                        self.add_plane_ox.value,
-                        self.add_plane_oy.value,
-                        self.add_plane_oz.value,
-                    ) = map(float, o)
-                    self.add_plane_offset.value = float(
-                        spec.get("offset", 0.0)
-                    )
-                    self.add_clip_side.value = spec.get("side", "up")
-                    self._on_create_layer_clicked(None)
-
-                elif action == "animate_layer":
-                    self.anim_master_mode.value = "layer"
-                    self.anim_layer_key.value = spec["layer"]
-                    self.anim_layer_param.value = spec["param"]
-                    self.anim_range.value = tuple(spec["range"])
-                    self.anim_points.value = int(
-                        spec.get("points", self.anim_points.value)
-                    )
-                    self.anim_fps.value = int(
-                        spec.get("fps", self.anim_fps.value)
-                    )
-                    if "format" in spec:
-                        self.anim_format.value = spec["format"]
-                    if "name" in spec:
-                        self.anim_name.value = spec["name"]
-                    if "auto_trim" in spec:
-                        self.anim_auto_trim.value = bool(spec["auto_trim"])
-                    if "min_valid" in spec:
-                        self.anim_min_valid.value = float(spec["min_valid"])
-                    self._on_save_animation_clicked(None)
-
-                elif action == "animate_rotation":
-                    self.anim_master_mode.value = "rotation"
-                    self.anim_rot_type.value = spec.get("mode", "orbit_z")
-                    if self.anim_rot_type.value == "axis":
-                        ax = spec.get("axis", [0.0, 0.0, 1.0])
+                    elif action == "create_plane":
+                        self.add_layer_kind.value = "plane"
+                        self.add_layer_name.value = spec["name"]
+                        n = spec.get("normal", [0.0, 0.0, 1.0])
+                        o = spec.get("origin", [0.0, 0.0, 0.0])
                         (
-                            self.anim_axis_x.value,
-                            self.anim_axis_y.value,
-                            self.anim_axis_z.value,
-                        ) = map(float, ax)
-                    self.anim_frames.value = int(
-                        spec.get("frames", self.anim_frames.value)
+                            self.add_plane_nx.value,
+                            self.add_plane_ny.value,
+                            self.add_plane_nz.value,
+                        ) = map(float, n)
+                        (
+                            self.add_plane_ox.value,
+                            self.add_plane_oy.value,
+                            self.add_plane_oz.value,
+                        ) = map(float, o)
+                        self.add_plane_offset.value = float(
+                            spec.get("offset", 0.0)
+                        )
+                        self.add_plane_thickness.value = float(
+                            spec.get("thickness", 0.0)
+                        )
+                        self.add_plane_extent.value = float(
+                            spec.get("extent", self.add_plane_extent.value)
+                        )
+                        self._on_create_layer_clicked(None)
+
+                    elif action == "create_clip":
+                        self.add_layer_kind.value = "clip"
+                        self.add_layer_name.value = spec["name"]
+                        self.add_clip_source.value = spec["source"]
+                        n = spec.get("normal", [0.0, 0.0, 1.0])
+                        o = spec.get("origin", [0.0, 0.0, 0.0])
+                        (
+                            self.add_plane_nx.value,
+                            self.add_plane_ny.value,
+                            self.add_plane_nz.value,
+                        ) = map(float, n)
+                        (
+                            self.add_plane_ox.value,
+                            self.add_plane_oy.value,
+                            self.add_plane_oz.value,
+                        ) = map(float, o)
+                        self.add_plane_offset.value = float(
+                            spec.get("offset", 0.0)
+                        )
+                        self.add_clip_side.value = spec.get("side", "up")
+                        self._on_create_layer_clicked(None)
+
+                    elif action == "animate_layer":
+                        self.anim_master_mode.value = "layer"
+                        self.anim_layer_key.value = spec["layer"]
+                        self.anim_layer_param.value = spec["param"]
+                        self.anim_range.value = tuple(spec["range"])
+                        self.anim_points.value = int(
+                            spec.get("points", self.anim_points.value)
+                        )
+                        self.anim_fps.value = int(
+                            spec.get("fps", self.anim_fps.value)
+                        )
+                        if "format" in spec:
+                            self.anim_format.value = spec["format"]
+                        if "name" in spec:
+                            self.anim_name.value = spec["name"]
+                        if "auto_trim" in spec:
+                            self.anim_auto_trim.value = bool(spec["auto_trim"])
+                        if "min_valid" in spec:
+                            self.anim_min_valid.value = float(
+                                spec["min_valid"]
+                            )
+                        self._on_save_animation_clicked(None)
+
+                    elif action == "animate_rotation":
+                        self.anim_master_mode.value = "rotation"
+                        self.anim_rot_type.value = spec.get("mode", "orbit_z")
+                        if self.anim_rot_type.value == "axis":
+                            ax = spec.get("axis", [0.0, 0.0, 1.0])
+                            (
+                                self.anim_axis_x.value,
+                                self.anim_axis_y.value,
+                                self.anim_axis_z.value,
+                            ) = map(float, ax)
+                        self.anim_frames.value = int(
+                            spec.get("frames", self.anim_frames.value)
+                        )
+                        self.anim_fps.value = int(
+                            spec.get("fps", self.anim_fps.value)
+                        )
+                        if "format" in spec:
+                            self.anim_format.value = spec["format"]
+                        if "name" in spec:
+                            self.anim_name.value = spec["name"]
+                        self._on_save_animation_clicked(None)
+
+                    elif action == "rename":
+                        self._rename_layer(spec["old"], spec["new"])
+
+                    elif action == "delete":
+                        self._delete_layer(
+                            spec["layer"],
+                            cascade=bool(spec.get("cascade", True)),
+                        )
+
+                    elif action == "refresh":
+                        self._update_all_traces()
+
+                    else:
+                        raise ValueError(f"Unknown action: {action}")
+
+                    results.append({"index": i, "ok": True, "action": action})
+
+                except Exception as e:
+                    results.append(
+                        {
+                            "index": i,
+                            "ok": False,
+                            "action": spec.get("action"),
+                            "error": str(e),
+                        }
                     )
-                    self.anim_fps.value = int(
-                        spec.get("fps", self.anim_fps.value)
-                    )
-                    if "format" in spec:
-                        self.anim_format.value = spec["format"]
-                    if "name" in spec:
-                        self.anim_name.value = spec["name"]
-                    self._on_save_animation_clicked(None)
-
-                elif action == "rename":
-                    self._rename_layer(spec["old"], spec["new"])
-
-                elif action == "delete":
-                    self._delete_layer(
-                        spec["layer"], cascade=bool(spec.get("cascade", True))
-                    )
-
-                elif action == "refresh":
-                    self._update_all_traces()
-
-                else:
-                    raise ValueError(f"Unknown action: {action}")
-
-                results.append({"index": i, "ok": True, "action": action})
-
-            except Exception as e:
-                results.append(
-                    {
-                        "index": i,
-                        "ok": False,
-                        "action": spec.get("action"),
-                        "error": str(e),
-                    }
-                )
-                if stop_on_error:
-                    raise
-
+                    if stop_on_error:
+                        raise
+        finally:
+            self._batch_edit = False
+            self._update_all_traces()
         return results
 
     def _apply_layer_params(self, layer: str, params: dict):
@@ -2740,6 +2751,7 @@ class MultiVolumeViewer(widgets.Box):
         }
 
         priority = [
+            "color_by",
             "auto_range",
             "range_min",
             "range_max",
@@ -2762,9 +2774,15 @@ class MultiVolumeViewer(widgets.Box):
                 raise ValueError(
                     f"Parameter '{key}' not available for layer '{layer}'"
                 )
+
             w[wk].value = value
 
-        self._update_all_traces()
+            if key in ("range", "range_slider"):
+                w["_pending_manual_range"] = tuple(value)
+
+        # defer update, caller will trigger it
+        if not getattr(self, "_batch_edit", False):
+            self._update_all_traces()
 
     # =========================
     # Create layer callback
@@ -4163,7 +4181,11 @@ class MultiVolumeViewer(widgets.Box):
 
             rs.unobserve(self._on_layer_param_changed, names="value")
             try:
-                old_lo, old_hi = rs.value
+                pending_range = w.pop("_pending_manual_range", None)
+                if pending_range is not None:
+                    old_lo, old_hi = pending_range
+                else:
+                    old_lo, old_hi = rs.value
 
                 rs.min = slider_min
                 rs.max = slider_max
@@ -4326,7 +4348,11 @@ class MultiVolumeViewer(widgets.Box):
 
             rs.unobserve(self._on_layer_param_changed, names="value")
             try:
-                old_lo, old_hi = rs.value
+                pending_range = w.pop("_pending_manual_range", None)
+                if pending_range is not None:
+                    old_lo, old_hi = pending_range
+                else:
+                    old_lo, old_hi = rs.value
 
                 rs.min = slider_min
                 rs.max = slider_max
@@ -4571,7 +4597,11 @@ class MultiVolumeViewer(widgets.Box):
 
             rs.unobserve(self._on_layer_param_changed, names="value")
             try:
-                old_lo, old_hi = rs.value
+                pending_range = w.pop("_pending_manual_range", None)
+                if pending_range is not None:
+                    old_lo, old_hi = pending_range
+                else:
+                    old_lo, old_hi = rs.value
 
                 rs.min = slider_min
                 rs.max = slider_max
