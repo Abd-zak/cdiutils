@@ -219,6 +219,7 @@ class Plotter:
         self.fontsize = fontsize
         self.title = title
         self.layers_kwargs = layers_kwargs or {}
+        self.viewer = None
 
         # 🔒 STRICT: MultiVolumeViewer only accepts dict
         if self.plot == "layers":
@@ -358,14 +359,13 @@ class Plotter:
 
             self.layers_kwargs.pop("figsize", None)
             self.layers_kwargs.pop("fontsize", None)
-
-            viewer = MultiVolumeViewer(
+            self.viewer = MultiVolumeViewer(
                 self.data_dict,
                 fontsize=self.fontsize,
                 figsize=self.figsize,
                 **self.layers_kwargs,
             )
-            viewer.show()
+            self.viewer.show()
             return
         elif self.plot == "1D" and self.data_array.ndim == 1:
             print(self.data_array)
