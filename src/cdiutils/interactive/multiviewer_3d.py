@@ -418,6 +418,7 @@ class MultiVolumeViewer(widgets.Box):
         if self.unit is None:
             return name
         return f"{name} ({self.unit})"
+
     def _fit_plot_to_container(self):
         with self.fig.batch_update():
             self.fig.layout.width = None
@@ -432,6 +433,7 @@ class MultiVolumeViewer(widgets.Box):
         if cam is None:
             cam = dict(eye=dict(x=1.5, y=1.5, z=1.5), up=dict(x=0, y=0, z=1))
         self.fig.layout.scene.camera = cam
+
     # =========================
     # Validation / registration
     # =========================
@@ -2322,10 +2324,7 @@ class MultiVolumeViewer(widgets.Box):
             w["nan_color_mask"],
             w["cmap_show_autorange"],
             w["range_slider"],
-            # widgets.HTML("<b>Lighting</b>"),
-            # self._make_lighting_box(w),
-            # widgets.HTML("<b>Transform</b>"),
-            # self._make_transform_box(w),
+            w["range_override_row"],
         ]
         children += [
             self._make_collapsible_section(
@@ -2524,7 +2523,9 @@ class MultiVolumeViewer(widgets.Box):
             return resolved
 
         available = ", ".join(self._visible_cb.keys())
-        raise KeyError(f"Unknown layer '{layer}'. Available layers: {available}")
+        raise KeyError(
+            f"Unknown layer '{layer}'. Available layers: {available}"
+        )
 
     def run_actions(self, actions: list[dict], stop_on_error: bool = True):
         """
@@ -2575,7 +2576,9 @@ class MultiVolumeViewer(widgets.Box):
                     else:
                         self.add_slice_pos.value = int(spec.get("pos", 0))
 
-                    self.add_slice_thickness.value = int(spec.get("thickness", 0))
+                    self.add_slice_thickness.value = int(
+                        spec.get("thickness", 0)
+                    )
                     self._on_create_layer_clicked(None)
 
                 elif action == "create_plane":
@@ -2583,11 +2586,25 @@ class MultiVolumeViewer(widgets.Box):
                     self.add_layer_name.value = spec["name"]
                     n = spec.get("normal", [0.0, 0.0, 1.0])
                     o = spec.get("origin", [0.0, 0.0, 0.0])
-                    self.add_plane_nx.value, self.add_plane_ny.value, self.add_plane_nz.value = map(float, n)
-                    self.add_plane_ox.value, self.add_plane_oy.value, self.add_plane_oz.value = map(float, o)
-                    self.add_plane_offset.value = float(spec.get("offset", 0.0))
-                    self.add_plane_thickness.value = float(spec.get("thickness", 0.0))
-                    self.add_plane_extent.value = float(spec.get("extent", self.add_plane_extent.value))
+                    (
+                        self.add_plane_nx.value,
+                        self.add_plane_ny.value,
+                        self.add_plane_nz.value,
+                    ) = map(float, n)
+                    (
+                        self.add_plane_ox.value,
+                        self.add_plane_oy.value,
+                        self.add_plane_oz.value,
+                    ) = map(float, o)
+                    self.add_plane_offset.value = float(
+                        spec.get("offset", 0.0)
+                    )
+                    self.add_plane_thickness.value = float(
+                        spec.get("thickness", 0.0)
+                    )
+                    self.add_plane_extent.value = float(
+                        spec.get("extent", self.add_plane_extent.value)
+                    )
                     self._on_create_layer_clicked(None)
 
                 elif action == "create_clip":
@@ -2596,9 +2613,19 @@ class MultiVolumeViewer(widgets.Box):
                     self.add_clip_source.value = spec["source"]
                     n = spec.get("normal", [0.0, 0.0, 1.0])
                     o = spec.get("origin", [0.0, 0.0, 0.0])
-                    self.add_plane_nx.value, self.add_plane_ny.value, self.add_plane_nz.value = map(float, n)
-                    self.add_plane_ox.value, self.add_plane_oy.value, self.add_plane_oz.value = map(float, o)
-                    self.add_plane_offset.value = float(spec.get("offset", 0.0))
+                    (
+                        self.add_plane_nx.value,
+                        self.add_plane_ny.value,
+                        self.add_plane_nz.value,
+                    ) = map(float, n)
+                    (
+                        self.add_plane_ox.value,
+                        self.add_plane_oy.value,
+                        self.add_plane_oz.value,
+                    ) = map(float, o)
+                    self.add_plane_offset.value = float(
+                        spec.get("offset", 0.0)
+                    )
                     self.add_clip_side.value = spec.get("side", "up")
                     self._on_create_layer_clicked(None)
 
@@ -2607,8 +2634,12 @@ class MultiVolumeViewer(widgets.Box):
                     self.anim_layer_key.value = spec["layer"]
                     self.anim_layer_param.value = spec["param"]
                     self.anim_range.value = tuple(spec["range"])
-                    self.anim_points.value = int(spec.get("points", self.anim_points.value))
-                    self.anim_fps.value = int(spec.get("fps", self.anim_fps.value))
+                    self.anim_points.value = int(
+                        spec.get("points", self.anim_points.value)
+                    )
+                    self.anim_fps.value = int(
+                        spec.get("fps", self.anim_fps.value)
+                    )
                     if "format" in spec:
                         self.anim_format.value = spec["format"]
                     if "name" in spec:
@@ -2624,9 +2655,17 @@ class MultiVolumeViewer(widgets.Box):
                     self.anim_rot_type.value = spec.get("mode", "orbit_z")
                     if self.anim_rot_type.value == "axis":
                         ax = spec.get("axis", [0.0, 0.0, 1.0])
-                        self.anim_axis_x.value, self.anim_axis_y.value, self.anim_axis_z.value = map(float, ax)
-                    self.anim_frames.value = int(spec.get("frames", self.anim_frames.value))
-                    self.anim_fps.value = int(spec.get("fps", self.anim_fps.value))
+                        (
+                            self.anim_axis_x.value,
+                            self.anim_axis_y.value,
+                            self.anim_axis_z.value,
+                        ) = map(float, ax)
+                    self.anim_frames.value = int(
+                        spec.get("frames", self.anim_frames.value)
+                    )
+                    self.anim_fps.value = int(
+                        spec.get("fps", self.anim_fps.value)
+                    )
                     if "format" in spec:
                         self.anim_format.value = spec["format"]
                     if "name" in spec:
@@ -2637,7 +2676,9 @@ class MultiVolumeViewer(widgets.Box):
                     self._rename_layer(spec["old"], spec["new"])
 
                 elif action == "delete":
-                    self._delete_layer(spec["layer"], cascade=bool(spec.get("cascade", True)))
+                    self._delete_layer(
+                        spec["layer"], cascade=bool(spec.get("cascade", True))
+                    )
 
                 elif action == "refresh":
                     self._update_all_traces()
@@ -2648,12 +2689,19 @@ class MultiVolumeViewer(widgets.Box):
                 results.append({"index": i, "ok": True, "action": action})
 
             except Exception as e:
-                results.append({"index": i, "ok": False, "action": spec.get("action"), "error": str(e)})
+                results.append(
+                    {
+                        "index": i,
+                        "ok": False,
+                        "action": spec.get("action"),
+                        "error": str(e),
+                    }
+                )
                 if stop_on_error:
                     raise
 
         return results
-    
+
     def _apply_layer_params(self, layer: str, params: dict):
         if layer not in self._layer_widgets:
             raise KeyError(f"Unknown layer: {layer}")
@@ -2673,6 +2721,10 @@ class MultiVolumeViewer(widgets.Box):
             "color_by": "color_by",
             "range": "range_slider",
             "range_slider": "range_slider",
+            "range_min": "range_min_override",
+            "range_max": "range_max_override",
+            "range_min_override": "range_min_override",
+            "range_max_override": "range_max_override",
             "nan_policy": "nan_policy",
             "light_ambient": "light_ambient",
             "light_diffuse": "light_diffuse",
@@ -2687,16 +2739,33 @@ class MultiVolumeViewer(widgets.Box):
             "trans_z": "trans_z",
         }
 
-        for key, value in params.items():
+        priority = [
+            "auto_range",
+            "range_min",
+            "range_max",
+            "range_min_override",
+            "range_max_override",
+            "range",
+            "range_slider",
+        ]
+
+        ordered_keys = [k for k in priority if k in params] + [
+            k for k in params if k not in priority
+        ]
+
+        for key in ordered_keys:
+            value = params[key]
             wk = widget_map.get(key)
             if wk is None:
                 raise ValueError(f"Unsupported layer parameter: {key}")
             if wk not in w:
-                raise ValueError(f"Parameter '{key}' not available for layer '{layer}'")
+                raise ValueError(
+                    f"Parameter '{key}' not available for layer '{layer}'"
+                )
             w[wk].value = value
 
-        self._update_all_traces()    
-    
+        self._update_all_traces()
+
     # =========================
     # Create layer callback
     # =========================
@@ -3616,7 +3685,7 @@ class MultiVolumeViewer(widgets.Box):
             nan_policy,
             color_by,
         ):
-            w.layout.width = "33%"
+            cb.layout.width = "33%"
             cb.layout.flex = "1 1 0%"
 
         vmin0 = float(np.nanmin(arr_stats))
@@ -3641,6 +3710,30 @@ class MultiVolumeViewer(widgets.Box):
         )
         range_slider.disabled = True
 
+        range_min_override = widgets.FloatText(
+            value=vmin0,
+            description="Range min",
+            style=self._common_style,
+            layout=widgets.Layout(width="47%"),
+        )
+
+        range_max_override = widgets.FloatText(
+            value=vmax0,
+            description="Range max",
+            style=self._common_style,
+            layout=widgets.Layout(width="47%"),
+        )
+
+        range_override_row = widgets.HBox(
+            [range_min_override, range_max_override],
+            layout=widgets.Layout(
+                width="95%",
+                display="flex",
+                justify_content="space-between",
+                gap="12px",
+            ),
+        )
+
         def _toggle_range_slider(change, _rs=range_slider):
             _rs.disabled = bool(change["new"])
 
@@ -3654,6 +3747,8 @@ class MultiVolumeViewer(widgets.Box):
             show_colorbar,
             auto_range,
             range_slider,
+            range_min_override,
+            range_max_override,
         ):
             wdg.observe(self._on_layer_param_changed, names="value")
 
@@ -3814,6 +3909,9 @@ class MultiVolumeViewer(widgets.Box):
             nan_color_mask=nan_color_mask,
             color_by=color_by,
             range_slider=range_slider,
+            range_min_override=range_min_override,
+            range_max_override=range_max_override,
+            range_override_row=range_override_row,
             light_ambient=light_ambient,
             light_diffuse=light_diffuse,
             light_specular=light_specular,
@@ -3871,6 +3969,30 @@ class MultiVolumeViewer(widgets.Box):
             )
 
         return go.Scatter3d(), False
+
+    def _get_effective_slider_bounds(
+        self, w, data_min: float, data_max: float
+    ):
+        if not np.isfinite(data_min):
+            data_min = 0.0
+        if not np.isfinite(data_max):
+            data_max = 1.0
+        if data_max <= data_min:
+            data_max = data_min + 1e-12
+
+        user_min = float(w["range_min_override"].value)
+        user_max = float(w["range_max_override"].value)
+
+        if user_min > user_max:
+            user_min, user_max = user_max, user_min
+
+        slider_min = min(data_min, user_min)
+        slider_max = max(data_max, user_max)
+
+        if slider_max <= slider_min:
+            slider_max = slider_min + 1e-12
+
+        return slider_min, slider_max
 
     def _make_mesh_trace_for_key(self, key: str, cbar_index: int = 0):
         arr = self.dict_data[key]
@@ -3983,7 +4105,6 @@ class MultiVolumeViewer(widgets.Box):
         # ----------------------------
         show_colorbar = bool(w["show_colorbar"].value)
         auto_range = bool(w["auto_range"].value)
-        rmin, rmax = w["range_slider"].value
 
         color_sel = w["color_by"].value  # dropdown value
 
@@ -4012,12 +4133,6 @@ class MultiVolumeViewer(widgets.Box):
         if data_max == data_min:
             data_max = data_min + 1e-12
 
-        cmin, cmax = (
-            (data_min, data_max) if auto_range else (float(rmin), float(rmax))
-        )
-        if cmax <= cmin:
-            cmax = cmin + 1e-12
-
         colorbar = None
         if (color_sel != "__constant__") and show_colorbar:
             if color_sel == "__self__":
@@ -4030,9 +4145,10 @@ class MultiVolumeViewer(widgets.Box):
 
         # Sync slider bounds safely: ONLY EXPAND (never shrink)
         rs = w["range_slider"]
+
         if color_sel != "__constant__":
-            new_min = float(np.nanmin(intensity))
-            new_max = float(np.nanmax(intensity))
+            new_min = data_min
+            new_max = data_max
 
             if not np.isfinite(new_min):
                 new_min = 0.0
@@ -4041,29 +4157,39 @@ class MultiVolumeViewer(widgets.Box):
             if new_max <= new_min:
                 new_max = new_min + 1e-12
 
-            target_min = min(float(rs.min), new_min)
-            target_max = max(float(rs.max), new_max)
-            if target_max <= target_min:
-                target_max = target_min + 1e-12
+            slider_min, slider_max = self._get_effective_slider_bounds(
+                w, new_min, new_max
+            )
 
             rs.unobserve(self._on_layer_param_changed, names="value")
             try:
-                v0, v1 = rs.value
-                v0 = float(np.clip(v0, target_min, target_max))
-                v1 = float(np.clip(v1, target_min, target_max))
-                if v1 < v0:
-                    v0, v1 = v1, v0
-                rs.value = (v0, v1)
+                old_lo, old_hi = rs.value
 
-                rs.min = target_min
-                rs.max = target_max
-                step = (target_max - target_min) / 300
-                rs.step = step if step > 0 else 0.01
+                rs.min = slider_min
+                rs.max = slider_max
+                rs.step = (
+                    (slider_max - slider_min) / 300
+                    if slider_max > slider_min
+                    else 0.01
+                )
 
-                if bool(w["auto_range"].value):
+                clamped_lo = float(np.clip(old_lo, slider_min, slider_max))
+                clamped_hi = float(np.clip(old_hi, slider_min, slider_max))
+
+                if clamped_hi < clamped_lo:
+                    clamped_lo, clamped_hi = slider_min, slider_max
+
+                if auto_range:
                     rs.value = (new_min, new_max)
+                    cmin, cmax = new_min, new_max
+                else:
+                    rs.value = (clamped_lo, clamped_hi)
+                    cmin, cmax = rs.value
             finally:
                 rs.observe(self._on_layer_param_changed, names="value")
+        else:
+            cmin, cmax = 0.0, 1.0
+
         if cmax <= cmin:
             cmax = cmin + 1e-12
         trace = go.Mesh3d(
@@ -4170,46 +4296,7 @@ class MultiVolumeViewer(widgets.Box):
         else:
             Xplot, Yplot, Zplot, Cplot = Xc, Yc, Zc, intensity2d
 
-        # ---- Sync slider bounds safely: ONLY EXPAND (never shrink) ----
-        rs = w["range_slider"]
-
-        if color_sel != "__constant__":
-            new_min = float(np.nanmin(Cplot))
-            new_max = float(np.nanmax(Cplot))
-
-            if not np.isfinite(new_min):
-                new_min = 0.0
-            if not np.isfinite(new_max):
-                new_max = 1.0
-            if new_max <= new_min:
-                new_max = new_min + 1e-12
-
-            target_min = min(float(rs.min), new_min)
-            target_max = max(float(rs.max), new_max)
-            if target_max <= target_min:
-                target_max = target_min + 1e-12
-
-            rs.unobserve(self._on_layer_param_changed, names="value")
-            try:
-                v0, v1 = rs.value
-                v0 = float(np.clip(v0, target_min, target_max))
-                v1 = float(np.clip(v1, target_min, target_max))
-                if v1 < v0:
-                    v0, v1 = v1, v0
-                rs.value = (v0, v1)
-
-                rs.min = target_min
-                rs.max = target_max
-                step = (target_max - target_min) / 300
-                rs.step = step if step > 0 else 0.01
-
-                if bool(w["auto_range"].value):
-                    rs.value = (new_min, new_max)
-            finally:
-                rs.observe(self._on_layer_param_changed, names="value")
-
         auto_range = bool(w["auto_range"].value)
-        rmin, rmax = w["range_slider"].value
         data_min = float(np.nanmin(Cplot))
         data_max = float(np.nanmax(Cplot))
         if not np.isfinite(data_min):
@@ -4219,9 +4306,53 @@ class MultiVolumeViewer(widgets.Box):
         if data_max == data_min:
             data_max = data_min + 1e-12
 
-        cmin, cmax = (
-            (data_min, data_max) if auto_range else (float(rmin), float(rmax))
-        )
+        # ---- Sync slider bounds safely: ONLY EXPAND (never shrink) ----
+        rs = w["range_slider"]
+
+        if color_sel != "__constant__":
+            new_min = data_min
+            new_max = data_max
+
+            if not np.isfinite(new_min):
+                new_min = 0.0
+            if not np.isfinite(new_max):
+                new_max = 1.0
+            if new_max <= new_min:
+                new_max = new_min + 1e-12
+
+            slider_min, slider_max = self._get_effective_slider_bounds(
+                w, new_min, new_max
+            )
+
+            rs.unobserve(self._on_layer_param_changed, names="value")
+            try:
+                old_lo, old_hi = rs.value
+
+                rs.min = slider_min
+                rs.max = slider_max
+                rs.step = (
+                    (slider_max - slider_min) / 300
+                    if slider_max > slider_min
+                    else 0.01
+                )
+
+                clamped_lo = float(np.clip(old_lo, slider_min, slider_max))
+                clamped_hi = float(np.clip(old_hi, slider_min, slider_max))
+
+                if clamped_hi < clamped_lo:
+                    clamped_lo, clamped_hi = slider_min, slider_max
+
+                if auto_range:
+                    rs.value = (new_min, new_max)
+                    cmin, cmax = new_min, new_max
+                else:
+                    rs.value = (clamped_lo, clamped_hi)
+                    cmin, cmax = rs.value
+            finally:
+                rs.observe(self._on_layer_param_changed, names="value")
+        else:
+            cmin, cmax = 0.0, 1.0
+
         if cmax <= cmin:
             cmax = cmin + 1e-12
 
@@ -4402,7 +4533,6 @@ class MultiVolumeViewer(widgets.Box):
         # coloring selection identical to your raw path
         show_colorbar = bool(w["show_colorbar"].value)
         auto_range = bool(w["auto_range"].value)
-        rmin, rmax = w["range_slider"].value
         color_sel = w["color_by"].value
 
         if color_sel == "__constant__":
@@ -4413,7 +4543,6 @@ class MultiVolumeViewer(widgets.Box):
         elif color_sel in ("__self__", layer_name, src):
             intensity = np.asarray(vals, dtype=float)
         else:
-            # allow coloring by other raw layers
             if color_sel in self._rgi:
                 intensity = self._rgi[color_sel](verts_zyx_idx)
             else:
@@ -4421,52 +4550,54 @@ class MultiVolumeViewer(widgets.Box):
 
         intensity = self._apply_nan_policy(intensity, policy)
 
-        new_min = float(np.nanmin(intensity))
-        new_max = float(np.nanmax(intensity))
-        if not np.isfinite(new_min):
-            new_min = 0.0
-        if not np.isfinite(new_max):
-            new_max = 1.0
-        if new_max <= new_min:
-            new_max = new_min + 1e-12
+        data_min = float(np.nanmin(intensity))
+        data_max = float(np.nanmax(intensity))
+        if not np.isfinite(data_min):
+            data_min = 0.0
+        if not np.isfinite(data_max):
+            data_max = 1.0
+        if data_max <= data_min:
+            data_max = data_min + 1e-12
 
         rs = w["range_slider"]
 
-        # RESET bounds when color_by changes (this is the key difference vs "only expand")
-        prev_cb = w.get("_range_ref_color_by", None)
-        cb_changed = prev_cb != color_sel
-        w["_range_ref_color_by"] = color_sel
+        if color_sel != "__constant__":
+            new_min = data_min
+            new_max = data_max
 
-        rs.unobserve(self._on_layer_param_changed, names="value")
-        try:
-            # set bounds to the *current* color_by field range
-            rs.min = new_min
-            rs.max = new_max
-            step = (new_max - new_min) / 300
-            rs.step = step if step > 0 else 0.01
+            slider_min, slider_max = self._get_effective_slider_bounds(
+                w, new_min, new_max
+            )
 
-            if bool(w["auto_range"].value) or cb_changed:
-                # auto-range OR color-by changed -> reset slider window to full range
-                rs.value = (new_min, new_max)
-            else:
-                # keep user's manual window but clamp to new bounds
-                v0, v1 = rs.value
-                v0 = float(np.clip(v0, new_min, new_max))
-                v1 = float(np.clip(v1, new_min, new_max))
-                if v1 < v0:
-                    v0, v1 = v1, v0
-                rs.value = (v0, v1)
-        finally:
-            rs.observe(self._on_layer_param_changed, names="value")
+            rs.unobserve(self._on_layer_param_changed, names="value")
+            try:
+                old_lo, old_hi = rs.value
 
-        # IMPORTANT: read rmin/rmax AFTER bounds update
-        rmin, rmax = rs.value
+                rs.min = slider_min
+                rs.max = slider_max
+                rs.step = (
+                    (slider_max - slider_min) / 300
+                    if slider_max > slider_min
+                    else 0.01
+                )
 
-        # now set cmin/cmax
-        auto_range = bool(w["auto_range"].value)
-        cmin, cmax = (
-            (new_min, new_max) if auto_range else (float(rmin), float(rmax))
-        )
+                clamped_lo = float(np.clip(old_lo, slider_min, slider_max))
+                clamped_hi = float(np.clip(old_hi, slider_min, slider_max))
+
+                if clamped_hi < clamped_lo:
+                    clamped_lo, clamped_hi = slider_min, slider_max
+
+                if auto_range:
+                    rs.value = (new_min, new_max)
+                    cmin, cmax = new_min, new_max
+                else:
+                    rs.value = (clamped_lo, clamped_hi)
+                    cmin, cmax = rs.value
+            finally:
+                rs.observe(self._on_layer_param_changed, names="value")
+        else:
+            cmin, cmax = 0.0, 1.0
+
         if cmax <= cmin:
             cmax = cmin + 1e-12
 
