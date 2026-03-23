@@ -2784,6 +2784,36 @@ class MultiVolumeViewer(widgets.Box):
         if not getattr(self, "_batch_edit", False):
             self._update_all_traces()
 
+    async def wait_for_export(self):
+        task = getattr(self, "_export_task", None)
+        if task is None:
+            return None
+        try:
+            return await task
+        finally:
+            # optional: clear finished task reference
+            if getattr(self, "_export_task", None) is task and task.done():
+                self._export_task = None
+
+    async def run_actions_async(self, actions: list[dict], stop_on_error: bool = True):
+        results = self.run_actions(actions, stop_on_error=stop_on_error)
+
+        for spec in actions:
+            action = spec.get("action")
+            if action in ("animate_layer", "animate_rotation") and spec.get("wait", False):
+                await self.wait_for_export()
+
+        return results
+    
+    async def animate_layer_and_wait(self, **spec):
+        spec = {"action": "animate_layer", **spec}
+        self.run_actions([spec])
+        return await self.wait_for_export()
+
+    async def animate_rotation_and_wait(self, **spec):
+        spec = {"action": "animate_rotation", **spec}
+        self.run_actions([spec])
+        return await self.wait_for_export()
     # =========================
     # Create layer callback
     # =========================
