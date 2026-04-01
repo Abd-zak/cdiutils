@@ -2748,6 +2748,7 @@ class MultiVolumeViewer(widgets.Box):
             "trans_x": "trans_x",
             "trans_y": "trans_y",
             "trans_z": "trans_z",
+            "slice_pos": "pos",
         }
 
         priority = [
