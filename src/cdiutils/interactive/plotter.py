@@ -94,7 +94,14 @@ class Plotter:
 
                 rendering_mode: Literal['safe', 'fast', 'process']
                     Rendering backend strategy used during animation export.
+                export_width: int
+                    Fixed width (pixels) for animation export (GIF/MP4).
+                    Overrides Plotly autosizing during offscreen rendering.
 
+                export_height: int
+                    Fixed height (pixels) for animation export.
+                    Required because notebook display size is not preserved
+                    during backend export (kaleido).
             Ignored for all other plot modes.
 
     Attributes:
@@ -208,6 +215,14 @@ class Plotter:
 
                     rendering_mode: Literal['safe', 'fast', 'process']
                         Rendering backend strategy (for animation).
+                export_width: int
+                    Fixed width (pixels) for animation export (GIF/MP4).
+                    Overrides Plotly autosizing during offscreen rendering.
+
+                export_height: int
+                    Fixed height (pixels) for animation export.
+                    Required because notebook display size is not preserved
+                    during backend export (kaleido).
         """
         # ---- legacy behaviour ----
         self.data_array = None

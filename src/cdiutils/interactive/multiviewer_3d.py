@@ -76,7 +76,16 @@ Main features
   - Rendering safety modes (Plotly/Kaleido):
       * rendering_mode="safe": serialize kaleido calls with a lock (stable)
       * rendering_mode="fast": allow concurrent to_image calls (faster, may be less stable)
-
+• Export configuration (animation rendering)
+    - export_width:
+        * Fixed width (pixels) for exported frames (GIF/MP4)
+        * Overrides Plotly autosizing during offscreen rendering
+    - export_height:
+        * Fixed height (pixels) for exported frames
+        * Must be consistent with layout aspect ratio for correct framing
+    - Note:
+        * Required because notebook display size (autosize=True) is not reliable
+            during backend export (kaleido)
 Typical use cases
 -----------------
 • Visualization of BCDI reconstructions (amplitude, phase, strain)
@@ -245,12 +254,14 @@ class MultiVolumeViewer(widgets.Box):
         CBAR_LEN=0.7,
         render_workers: int | None = None,
         render_in_flight: int | None = None,
-        rendering_mode: Literal["safe", "fast", "process"] = "safe",
+        rendering_mode: Literal["safe", "fast", "process"] = "safe",export_width: int = 1500, export_height: int = 1200,
+
     ):
         super().__init__()
 
         self.cmap_options = self._get_all_supported_cmaps()
-
+        self.export_width = export_width
+        self.export_height = export_height
         # Global rendering safety switch
         self.force_fixed_color_range = (
             False  # default: disable auto-range everywhere (export + UI)
@@ -4936,7 +4947,7 @@ class MultiVolumeViewer(widgets.Box):
                 font=self._bold_font(self.fontsize * 1.5),
                 side="top",
             ),
-            tickfont=self._bold_font(self.fontsize)
+            tickfont=self._bold_font(self.fontsize*1.5)
             | dict(color=self._colorbar_tick_color()),
             thickness=28,
             # theme-aware outline
@@ -5673,12 +5684,6 @@ class MultiVolumeViewer(widgets.Box):
         fps = int(self.anim_fps.value)
         use_cam = bool(self.anim_use_current_camera.value)
 
-        # width/height fallback
-        w = self.fig.layout.width
-        h = self.fig.layout.height
-        w = 900 if w is None else int(str(w).replace("px", ""))
-        h = 900 if h is None else int(str(h).replace("px", ""))
-
         # cancel previous export if still running
         t = getattr(self, "_export_task", None)
         if t is not None and not t.done():
@@ -5697,8 +5702,8 @@ class MultiVolumeViewer(widgets.Box):
             fmt=fmt,
             n_frames=n_frames,
             fps=fps,
-            width=w,
-            height=h,
+            width=self.export_width,
+            height=self.export_height,
             scale=2,
             use_current_camera_as_start=use_cam,
             max_workers=self.render_workers,
@@ -5910,7 +5915,11 @@ class MultiVolumeViewer(widgets.Box):
 
         # ---- base (offscreen) figure ----
         base_fig = go.Figure(self.fig.to_plotly_json())
-
+        base_fig.update_layout(
+            autosize=False,
+            width=width,
+            height=height,
+        )
         # ---- starting camera ----
         cam0 = None
         try:
@@ -6291,6 +6300,7 @@ class MultiVolumeViewer(widgets.Box):
         self.anim_status.value = (
             f"Exporting layer animation → <code>{out_path.name}</code>"
         )
+
         # run async if your environment supports it; else run sync fallback
         try:
             coro = self._save_layer_animation_async(
@@ -6301,11 +6311,12 @@ class MultiVolumeViewer(widgets.Box):
                 v0=v0,
                 v1=v1,
                 n_frames=n_frames,
+                width=self.export_width,
+                height=self.export_height,
                 fps=fps,
                 max_workers=getattr(self, "render_workers", None),
                 max_in_flight=getattr(self, "render_in_flight", None),
             )
-
             # if an event loop is running (notebook), schedule task
             try:
                 loop = asyncio.get_running_loop()
@@ -6367,8 +6378,8 @@ class MultiVolumeViewer(widgets.Box):
         v1: float,
         n_frames: int,
         fps: int,
-        width: int = 900,
-        height: int = 900,
+        width: int = 1700,
+        height: int = 1200,
         scale: int = 2,
         preview_every: int = 1,
         **kwargs,
@@ -6416,9 +6427,17 @@ class MultiVolumeViewer(widgets.Box):
                 self.anim_status.value = "Preparing export…"
         except Exception:
             pass
+        self.fig.update_layout(
+            autosize=False,
+        )
 
         # ---- offscreen clone (we mutate base_fig sequentially) ----
         base_fig = go.Figure(self.fig.to_plotly_json())
+        base_fig.update_layout(
+            autosize=False,
+            width=width,
+            height=height,
+        )
 
         # locate trace idx
         trace_idx = None
