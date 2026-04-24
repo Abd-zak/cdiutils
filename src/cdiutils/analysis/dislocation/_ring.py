@@ -10,7 +10,7 @@ def dislo_process_phase_ring(
     angle,
     phase,
     displacement_vectors,
-    factor_phase=1,
+    radial_distance,
     poly_order=1,
     jump_filter_ML=False,
     jump_filter_gradient_only=False,
@@ -22,6 +22,7 @@ def dislo_process_phase_ring(
     figsize=(12, 18),
     markersize=10,
     linewidth=1,
+    show_plot=True,
 ):
     """
     Processes the phase and angle data to analyze dislocation properties in a phase ring.
@@ -40,7 +41,6 @@ def dislo_process_phase_ring(
         angle (np.ndarray): The angle data.
         phase (np.ndarray): The phase data.
         displacement_vectors (np.ndarray): The displacement vectors associated with the phase data.
-        factor_phase (float, optional): Scaling factor applied to phase data. Defaults to 1.
         poly_order (int, optional): Order of polynomial fit for trend removal. Defaults to 1 (linear).
         jump_filter (bool, optional): If True, applies phase jump removal and outlier filtering.
         plot_debug (bool, optional): If True, generates detailed debugging plots.
@@ -226,6 +226,7 @@ def dislo_process_phase_ring(
     # Extract indices where phase is nonzero
     nonzero_indices = np.nonzero(phase)
     displacement_vectors_ring = displacement_vectors[nonzero_indices]
+    radial_distance_ring = radial_distance[nonzero_indices].flatten()
     angle_ring = angle[nonzero_indices].flatten()
     phase_ring = phase[nonzero_indices].flatten()
 
@@ -234,6 +235,7 @@ def dislo_process_phase_ring(
     angle_ring = angle_ring[sort_indices]
     phase_ring = phase_ring[sort_indices]
     displacement_vectors_ring_sorted = displacement_vectors_ring[sort_indices]
+    radial_distance_ring_sorted = radial_distance_ring[sort_indices]
 
     # Convert phase to degrees
     phase_ring = phase_ring * (180 / np.pi)
@@ -242,7 +244,6 @@ def dislo_process_phase_ring(
     # Store raw data
     phase_raw, angle_raw = phase_ring.copy(), angle_ring.copy()
     if jump_filter_ML:
-        # Select displacement vectors corresponding to filtered indices
         sel___ = np.zeros_like(angle_ring, dtype=bool)
         angle_ring, phase_ring, filtered_indices = filter_phase_data(
             angle_ring, phase_ring
@@ -250,11 +251,14 @@ def dislo_process_phase_ring(
         displacement_vectors_final = displacement_vectors_ring_sorted[
             filtered_indices
         ]
-        # Create a mask for selected (kept) points
-        sel___[filtered_indices] = True  # Mark selected indices as True
+        radial_distance_final = radial_distance_ring_sorted[filtered_indices]
+        sel___[filtered_indices] = True
+
     elif jump_filter_gradient_only:
         phase_ring = remove_large_jumps_alter_unwrap(phase_ring)
         displacement_vectors_final = displacement_vectors_ring_sorted.copy()
+        radial_distance_final = radial_distance_ring_sorted.copy()
+
     elif filter_by_slope:
         sel___ = np.zeros_like(angle_ring, dtype=bool)
         (
@@ -273,10 +277,12 @@ def dislo_process_phase_ring(
         displacement_vectors_final = displacement_vectors_ring_sorted[
             filtered_indices
         ]
-        # Create a mask for selected (kept) points
-        sel___[filtered_indices] = True  # Mark selected indices as True
+        radial_distance_final = radial_distance_ring_sorted[filtered_indices]
+        sel___[filtered_indices] = True
+
     else:
         displacement_vectors_final = displacement_vectors_ring_sorted.copy()
+        radial_distance_final = radial_distance_ring_sorted.copy()
 
     phase_final = np.unwrap(phase_ring, period=period_jump)
     phase_final = np.unwrap(phase_final, period=period_jump)
@@ -289,8 +295,6 @@ def dislo_process_phase_ring(
     # Remove polynomial trend
     poly_coeffs = np.polyfit(angle_ring, phase_final, poly_order)
     slope, intercept = poly_coeffs
-    # if (slope >1.2) or ((slope <0.9)):
-    # slope = factor_phase * 1.0
     poly_coeffs = slope, intercept
     poly_fit = np.polyval(poly_coeffs, angle_ring)
     phase_sinu = center_angles(phase_final - poly_fit)
@@ -319,7 +323,7 @@ def dislo_process_phase_ring(
                 "savefig.bbox": "tight",
             }
         )
-        fig, axes = plt.subplots(6, 1, figsize=figsize, sharex=True)
+        _, axes = plt.subplots(6, 1, figsize=figsize, sharex=True)
 
         axes[0].plot(
             angle_raw,
@@ -461,7 +465,10 @@ def dislo_process_phase_ring(
         plt.tight_layout()
         if save_path is not None:
             plt.savefig(save_path)
-        plt.show()
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
         rcParams["font.size"] = 12
 
     return (
@@ -473,6 +480,7 @@ def dislo_process_phase_ring(
         phase_sinu,
         displacement_vectors_ring_sorted,
         displacement_vectors_final,
+        radial_distance_final,
     )
 
 

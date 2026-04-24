@@ -41,7 +41,6 @@ import pytest
 
 def _make_synthetic_cube_with_screw_phase(
     shape=(48, 48, 48),
-    phase_scale=1.0,
     core_radius_vox=2.0,
     seed=0,
 ):
@@ -63,7 +62,7 @@ def _make_synthetic_cube_with_screw_phase(
     r_xy = np.sqrt(xx**2 + yy**2)
     ang = np.arctan2(yy, xx)
     core_soft = 1.0 - np.exp(-((r_xy / core_radius_vox) ** 2))
-    phase = (phase_scale * ang * core_soft).astype(np.float32)
+    phase = (ang * core_soft).astype(np.float32)
 
     # wrap
     phase = np.angle(np.exp(1j * phase)).astype(np.float32)
@@ -144,7 +143,7 @@ def test_geometry_create_circular_mask_outputs():
     centroid = np.array([16.0, 16.0, 16.0])
     direction = np.array([0.0, 0.0, 1.0])
 
-    circular_mask, polar_angles, disp_vecs, d_out = (
+    circular_mask, polar_angles, disp_vecs, radial_distance, d_out = (
         dislocation.create_circular_mask(
             data_shape=shape,
             centroid=centroid,
@@ -162,6 +161,7 @@ def test_geometry_create_circular_mask_outputs():
     assert np.isfinite(d_out).all()
     assert circular_mask.sum() > 0
     assert np.any(polar_angles != 0.0)
+    assert radial_distance.shape == shape
 
 
 def test_geometry_plot_phase_around_dislo_masks_phase(tmp_path):
@@ -181,24 +181,26 @@ def test_geometry_plot_phase_around_dislo_masks_phase(tmp_path):
 
     centroid = np.array([20.0, 20.0, 20.0])
     direction = np.array([1.0, 0.0, 0.0])
-
-    masked_phase, polar_angles, circular_mask, disp_vecs, d_out = (
-        dislocation.plot_phase_around_dislo(
-            amp=amp,
-            phase=phase,
-            selected_dislocation_data=selected_dislo,
-            r=6,
-            dr=2,
-            centroid=centroid,
-            direction=direction,
-            slice_thickness=2,
-            selected_point_index=0,
-            save_vti=True,
-            fig_title="pytest",
-            plot_debug=False,
-            save_path=str(tmp_path / "ring.vti"),
-            voxel_sizes=(1.0, 1.0, 1.0),
-        )
+    (
+        masked_phase,
+        polar_angles,
+        circular_mask,
+        disp_vecs,
+        radial_distance,
+        d_out,
+    ) = dislocation.plot_phase_around_dislo(
+        amp=amp,
+        phase=phase,
+        selected_dislocation_data=selected_dislo,
+        r=6,
+        dr=2,
+        centroid=centroid,
+        direction=direction,
+        slice_thickness=2,
+        selected_point_index=0,
+        save_vti=True,
+        save_path=str(tmp_path / "ring.vti"),
+        voxel_sizes=(1.0, 1.0, 1.0),
     )
 
     assert masked_phase.shape == shape
@@ -206,6 +208,7 @@ def test_geometry_plot_phase_around_dislo_masks_phase(tmp_path):
     assert np.any(masked_phase != 0)
     assert polar_angles.shape == shape
     assert disp_vecs.shape == (*shape, 3)
+    assert radial_distance.shape == shape
     assert np.isfinite(d_out).all()
 
 
@@ -267,41 +270,44 @@ def test_dislo_process_phase_ring_runs_without_plotting():
     from cdiutils.analysis import dislocation
 
     shape = (40, 40, 40)
-    amp, phase, mask, obj = _make_synthetic_cube_with_screw_phase(
-        shape=shape, phase_scale=1.0
-    )
+    amp, phase, mask, obj = _make_synthetic_cube_with_screw_phase(shape=shape)
     selected_dislo = np.zeros(shape, dtype=np.uint8)
     selected_dislo[10:30, 20, 20] = 1
 
     centroid = np.array([20.0, 20.0, 20.0])
     direction = np.array([1.0, 0.0, 0.0])
 
-    phase_ring_3d, angle_ring_3d, circular_mask, disp_vecs, _ = (
-        dislocation.plot_phase_around_dislo(
-            amp=amp,
-            phase=phase,
-            selected_dislocation_data=selected_dislo,
-            r=7,
-            dr=2,
-            centroid=centroid,
-            direction=direction,
-            slice_thickness=2,
-            selected_point_index=0,
-            save_vti=False,
-            plot_debug=False,
-            save_path=None,
-            voxel_sizes=(1.0, 1.0, 1.0),
-        )
+    (
+        phase_ring_3d,
+        angle_ring_3d,
+        circular_mask,
+        disp_vecs,
+        radial_distance,
+        _,
+    ) = dislocation.plot_phase_around_dislo(
+        amp=amp,
+        phase=phase,
+        selected_dislocation_data=selected_dislo,
+        r=7,
+        dr=2,
+        centroid=centroid,
+        direction=direction,
+        slice_thickness=2,
+        selected_point_index=0,
+        save_vti=False,
+        save_path=None,
+        voxel_sizes=(1.0, 1.0, 1.0),
     )
 
     out = dislocation.dislo_process_phase_ring(
         angle=angle_ring_3d,
         phase=phase_ring_3d,
         displacement_vectors=disp_vecs,
+        radial_distance=radial_distance,
         plot_debug=False,
     )
     assert isinstance(out, tuple)
-    assert len(out) == 8
+    assert len(out) == 9
     (
         angle_raw,
         phase_raw,
@@ -311,18 +317,22 @@ def test_dislo_process_phase_ring_runs_without_plotting():
         phase_sinu,
         dv_sorted,
         dv_final,
+        radial_distance_final,
     ) = out
     assert len(angle_raw) == len(phase_raw)
     assert len(angle_final) == len(phase_final)
     assert np.isfinite(phase_final).all()
     assert np.isfinite(phase_sinu).all()
+    assert radial_distance_final.ndim == 1
+    assert len(radial_distance_final) == len(angle_final)
+    assert np.isfinite(radial_distance_final).all()
 
 
 def test_strain_map_map_min_gradient_shapes_and_range(tmp_path):
     from cdiutils.analysis import dislocation
 
     amp, phase, mask, obj = _make_synthetic_cube_with_screw_phase(
-        shape=(40, 40, 40), phase_scale=1.0
+        shape=(40, 40, 40)
     )
 
     strain_mask, strain_amp = dislocation.map_min_gradient(
@@ -443,7 +453,12 @@ def test_theory_dislo_phase_model_basic_properties():
     b = np.array([0.0, 0.0, 1.0])  # pure screw along t
 
     phi = dislocation.dislo_phase_model(
-        theta=theta, t=t, G=G, b=b, only_theta_dep=True
+        theta,
+        t=t,
+        G=G,
+        b=b,
+        x_ref=np.array([1.0, 0.0, 0.0]),
+        radial=False,
     )
     assert phi.shape == theta.shape
     assert np.isfinite(phi).all()

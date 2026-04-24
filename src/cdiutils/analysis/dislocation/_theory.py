@@ -1,109 +1,148 @@
-import math
-
 import numpy as np
 
-
 ## Compute the theoretical phase due to a dislocation.
+
+
 def dislo_phase_model(
     theta,
     t,
     G,
     b,
+    x_ref,
     nu=0.3,
-    fact=-1,
-    r=1.0,
+    r=None,
+    radial=False,
     print_debug=False,
-    only_theta_dep=True,
     print_debug_u=False,
-    align_theta=None,
-) -> np.ndarray:
+):
     """
-    Compute the theoretical phase shift due to a dislocation.
+    Compute the theoretical BCDI phase induced by a mixed dislocation.
 
-    Parameters:
-    - theta: np.ndarray or float, polar angle(s) in radians
-    - t: (3,) array, dislocation line direction
-    - G: (3,) array, reciprocal lattice vector
-    - b: (3,) array, Burgers vector
-    - nu: float, Poisson's ratio (default = 0.3)
-    - d_hkl: float, Interplanar spacing (default = 0.39239)
-    - r: np.ndarray or float, radial distance(s) from dislocation core
-    - print_debug: bool, whether to print debug information
+    The model builds a local dislocation frame where z is aligned with the
+    dislocation line direction, x is aligned with the edge component of the
+    Burgers vector, and y completes the orthonormal frame. The angular coordinate
+    is anchored to a fixed experimental in-plane reference direction x_ref.
 
-    Returns:
-    - u_final: np.ndarray, theoretical phase shift
+    Parameters
+    ----------
+    theta : np.ndarray or float
+        Polar angle values in radians.
+    t : array-like, shape (3,)
+        Dislocation line direction.
+    G : array-like, shape (3,)
+        Reciprocal-space vector used for BCDI phase projection.
+    b : array-like, shape (3,)
+        Burgers vector.
+    x_ref : array-like, shape (3,)
+        Experimental in-plane reference direction used to anchor theta.
+    nu : float, optional
+        Poisson ratio.
+    r : np.ndarray or float, optional
+        Radial distance from the dislocation line. Required when radial=True.
+    radial : bool, optional
+        If True, include the logarithmic radial term in the edge displacement.
+    print_debug : bool, optional
+        If True, print frame and projection diagnostics.
+    print_debug_u : bool, optional
+        If True, print displacement and final phase values.
+
+    Returns
+    -------
+    u_final : np.ndarray
+        Theoretical phase projected along G.
     """
 
-    # Convert inputs to NumPy arrays and ensure correct shape
+    theta = np.asarray(theta, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).reshape(-1)
     G = np.asarray(G, dtype=np.float64).reshape(-1)
     b = np.asarray(b, dtype=np.float64).reshape(-1)
-    theta = np.asarray(theta, dtype=np.float64)
-    r = np.asarray(r, dtype=np.float64)
+    x_ref = np.asarray(x_ref, dtype=np.float64).reshape(-1)
 
-    # Compute perpendicular component of Burgers vector
-    b_perp = project_vector(b, t)
-    b_paral = b - b_perp
-    b_par_normalized = normalize_vector(b_paral)
+    if r is not None:
+        r = np.asarray(r, dtype=np.float64)
+
+    # Fixed line direction
+    z_hat = normalize_vector(t)
+
+    # Candidate-dependent edge direction
+    b_perp = project_vector(b, z_hat)
     b_perp_norm = np.linalg.norm(b_perp)
-    if align_theta is not None:
-        # here we need the reference of the exp  : means the vector from the center to the point in the ring at theta 0 (in another word the x axis of the experiment of the ring in crystallographic basis)
-        theta_shift = signed_angle_3d(b_perp, align_theta, b_par_normalized)
-        theta_shift_rad = np.deg2rad(theta_shift)
-        if print_debug:
-            print(
-                f" the bper is off by {theta_shift} ° from the experimental reference"
-            )
-        theta += theta_shift_rad
-    b_screw = np.dot(b, t / np.linalg.norm(t))
+
+    if b_perp_norm < 1e-12:
+        # pure screw fallback
+        x_hat = normalize_vector(project_vector(x_ref, z_hat))
+    else:
+        x_hat = b_perp / b_perp_norm
+
+    y_hat = normalize_vector(np.cross(z_hat, x_hat))
+
+    # Experimental anchoring:
+    # shift theta so that the candidate x-axis is compared to the same x_ref
+    x_ref_proj = normalize_vector(project_vector(x_ref, z_hat))
+    theta_shift_deg = signed_angle_3d(x_hat, x_ref_proj, z_hat)
+    theta_shift = np.deg2rad(theta_shift_deg)
+
+    theta_used = theta - theta_shift
+
+    # Signed components in candidate frame
+    Gx = np.dot(G, x_hat)
+    Gy = np.dot(G, y_hat)
+    Gz = np.dot(G, z_hat)
+
+    bx = np.dot(b, x_hat)
+    bz = np.dot(b, z_hat)
 
     if print_debug:
-        print(f"b_perp: {b_perp}, b_perp_norm: {b_perp_norm}")
-        print(f"b_screw: {b_paral}  b_screw_norm: {b_screw}")
+        print("=== Candidate anchored frame ===")
+        print(f"x_hat: {x_hat}")
+        print(f"y_hat: {y_hat}")
+        print(f"z_hat: {z_hat}")
+        print(f"theta_shift (deg): {theta_shift_deg}")
+        print(f"Gx, Gy, Gz = {Gx}, {Gy}, {Gz}")
+        print(f"bx, bz     = {bx}, {bz}")
+        print("x_ref_proj:", x_ref_proj)
+        print("x_hat:", x_hat)
 
-    if np.isclose(b_perp_norm, 0) and print_debug:
-        print("Warning: b_perp is zero, phase shift will be zero.")
-
-    # Compute displacement fields
-    if only_theta_dep:
-        u_x_theo = (b_perp_norm / (2 * np.pi)) * (
-            theta + np.sin(2 * theta) / (4 * (1 - nu))
+        print(
+            "angle x_hat -> x_ref :", signed_angle_3d(x_hat, x_ref_proj, z_hat)
         )
-        u_y_theo = -(b_perp_norm / (8 * np.pi * (1 - nu))) * (
-            np.cos(2 * theta)
+        print(
+            "angle x_ref -> x_hat :", signed_angle_3d(x_ref_proj, x_hat, z_hat)
         )
-        u_z_theo = (b_screw / (2 * np.pi)) * theta
+        edge_x_scale = Gx * bx
+        edge_y_scale = Gy * bx
+        screw_scale = Gz * bz
 
+        print("edge_x_scale:", edge_x_scale)
+        print("edge_y_scale:", edge_y_scale)
+        print("screw_scale :", screw_scale)
+        slope = (edge_x_scale + screw_scale) / (2 * np.pi)
+        print("slope:", slope)
+
+    u_x_theo = (bx / (2 * np.pi)) * (
+        theta_used + np.sin(2 * theta_used) / (4 * (1 - nu))
+    )
+
+    u_z_theo = (bz / (2 * np.pi)) * theta_used
+
+    if radial:
+        if r is None:
+            raise ValueError("radial=True but r is not provided.")
+        if np.any(r <= 0):
+            raise ValueError("r must be > 0 for log(r).")
+
+        u_y_theo = -(bx / (8 * np.pi * (1 - nu))) * (
+            2 * (1 - 2 * nu) * np.log(r) + np.cos(2 * theta_used)
+        )
     else:
-        u_x_theo = (b_perp_norm / (2 * np.pi)) * (
-            theta + np.sin(2 * theta) / (4 * (1 - nu))
-        )
-        u_y_theo = -(b_perp_norm / (8 * np.pi * (1 - nu))) * (
-            2 * (1 - 2 * nu) * np.log(r) + np.cos(2 * theta)
-        )
-        u_z_theo = (b_screw / (2 * np.pi)) * theta
+        u_y_theo = -(bx / (8 * np.pi * (1 - nu))) * np.cos(2 * theta_used)
 
     if print_debug_u:
-        print(
-            f"u_x_theo: {u_x_theo}, u_y_theo: {u_y_theo}, u_z_theo: {u_z_theo}"
-        )
+        print(f"u_x_theo: {u_x_theo}")
+        print(f"u_y_theo: {u_y_theo}")
+        print(f"u_z_theo: {u_z_theo}")
 
-    # Compute rotation matrix from real space to dislocation frame
-    R = dislo_rotation_matrix_real_to_theo(t, b)
-
-    if print_debug:
-        print(f"Rotation matrix R:\n{R}")
-
-    # Rotate G vector
-    G_theo = np.dot(R, G)
-
-    if print_debug:
-        print(f"G_theo: {G_theo}")
-
-    # Compute phase shift
-    u_final = fact * (
-        G_theo[0] * u_x_theo + G_theo[1] * u_y_theo + G_theo[2] * u_z_theo
-    )
+    u_final = Gx * u_x_theo + Gy * u_y_theo + Gz * u_z_theo
 
     if print_debug_u:
         print(f"Final Phase Shift: {u_final}")
@@ -181,7 +220,7 @@ def dislo_rotation_matrix_real_to_theo(t, b):
     return R
 
 
-def normalize_vector(v):
+def normalize_vector(v, eps=1e-12):
     """
     Normalize a vector to unit length.
 
@@ -210,7 +249,11 @@ def normalize_vector(v):
     >>> normalize_vector([3, 0, 4])
     array([0.6, 0. , 0.8])
     """
-    return v / np.linalg.norm(v)
+    v = np.asarray(v, dtype=np.float64)
+    n = np.linalg.norm(v)
+    if not np.isfinite(n) or n < eps:
+        raise ValueError(f"Cannot normalize zero or non-finite vector: {v}")
+    return v / n
 
 
 def project_vector(v, t):
@@ -250,10 +293,17 @@ def project_vector(v, t):
     """
     v = np.array(v, dtype=np.float64)  # Ensure `v` is a NumPy array
     t = np.array(t, dtype=np.float64)  # Ensure `t` is a NumPy array
-    return v - (np.dot(v, t) / np.linalg.norm(t) ** 2) * t
+
+    t_norm = np.linalg.norm(t)
+    if not np.isfinite(t_norm) or t_norm < 1e-12:
+        raise ValueError(
+            f"Cannot project using zero or invalid direction: {t}"
+        )
+
+    return v - (np.dot(v, t) / t_norm**2) * t
 
 
-def signed_angle_3d(u, v, normal):
+def signed_angle_3d(u, v, normal, eps=1e-12):
     """
     Compute the signed angle (in degrees) between two 3D vectors `u` and `v`,
     measured around a specified `normal` axis direction.
@@ -281,17 +331,25 @@ def signed_angle_3d(u, v, normal):
         >>> signed_angle_3d(v, u, normal)
         -90.0
     """
-    u = np.array(u)
-    v = np.array(v)
-    normal = np.array(normal)
+    u = np.asarray(u, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    normal = np.asarray(normal, dtype=np.float64)
 
-    angle = angle_between_vectors(u, v)
+    normal_norm = np.linalg.norm(normal)
+    if not np.isfinite(normal_norm) or normal_norm < eps:
+        raise ValueError(f"Normal vector is zero or invalid: {normal}")
+
+    angle = angle_between_vectors(u, v, eps=eps)
     cross = np.cross(u, v)
-    sign = np.sign(np.dot(cross, normal))
-    return angle * sign
+    s = np.dot(cross, normal)
+
+    if np.isclose(s, 0.0, atol=eps):
+        return 0.0 if np.isclose(angle, 0.0, atol=eps) else angle
+
+    return angle * np.sign(s)
 
 
-def angle_between_vectors(u, v):
+def angle_between_vectors(u, v, eps=1e-12):
     """
     Compute the angle between two vectors in Euclidean space.
 
@@ -329,19 +387,23 @@ def angle_between_vectors(u, v):
     >>> angle_between_vectors([1, 0], [1, 0])
     0.0
     """
+    u = np.asarray(u, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
 
-    # Calculate dot product
-    dot_product = sum(u_i * v_i for u_i, v_i in zip(u, v))
+    magnitude_u = np.linalg.norm(u)
+    magnitude_v = np.linalg.norm(v)
 
-    # Calculate magnitudes
-    magnitude_u = math.sqrt(sum(u_i**2 for u_i in u))
-    magnitude_v = math.sqrt(sum(v_i**2 for v_i in v))
+    if not np.isfinite(magnitude_u) or not np.isfinite(magnitude_v):
+        raise ValueError("Non-finite vector norm in angle_between_vectors.")
+    if magnitude_u < eps or magnitude_v < eps:
+        raise ValueError(
+            f"Cannot compute angle with zero vector: u={u}, v={v}"
+        )
 
-    # Calculate angle in radians and then convert to degrees
-    angle_radians = math.acos(dot_product / (magnitude_u * magnitude_v))
-    angle_degrees = math.degrees(angle_radians)
+    cosang = np.dot(u, v) / (magnitude_u * magnitude_v)
+    cosang = np.clip(cosang, -1.0, 1.0)
 
-    return angle_degrees
+    return np.degrees(np.arccos(cosang))
 
 
 def transform_known_vector_to_crystallographic(vx, vy, vz, R):

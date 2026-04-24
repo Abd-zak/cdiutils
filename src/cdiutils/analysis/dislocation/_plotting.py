@@ -25,6 +25,7 @@ def plot_phase_data_comparison_exp_to_theo(
     font_size=12,
     offset_theta=None,
     ncol=3,
+    show_plot=True,
 ):
     """
     Plot the experimental phase and the theoretical phase.
@@ -205,5 +206,7 @@ def plot_phase_data_comparison_exp_to_theo(
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
     rcParams["font.size"] = 12
-
-    plt.show()
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()

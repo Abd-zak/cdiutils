@@ -57,44 +57,55 @@ def create_circular_mask(
     dr,
     slice_thickness=2,
 ):
-    """Create a circular mask and compute polar angles and displacement vectors from the disk center.
-
-    Args:
-        data_shape (tuple): Shape of the 3D data (e.g., (100, 100, 100)).
-        centroid (np.array): Central point of the fitted line (e.g., np.array([50, 50, 50])).
-        direction (np.array): Direction vector of the line (must be normalized).
-        selected_point_index (float): Scalar to move along the direction vector from the centroid.
-        r (float): Inner radius of the circular mask.
-        dr (float): Thickness of the circular mask.
-        slice_thickness (float): Thickness of the slice along the direction vector.
-
-    Returns:
-        circular_mask (np.ndarray): 3D mask with the circular region marked (1s for the mask, 0s elsewhere).
-        polar_angles_masked (np.ndarray): 3D array with polar angles where the mask is applied.
-        displacement_vectors (np.ndarray): 3D array storing vectors from disk center to each masked point.
     """
-    selected_point_index = selected_point_index / 2  # Adjust the index scaling
+    Create a cylindrical ring mask around a dislocation line and compute
+    associated cylindrical coordinates in the local frame.
 
-    # Normalize the direction vector
+    Parameters
+    ----------
+    data_shape : tuple
+        Shape of the 3D volume (nx, ny, nz).
+    centroid : np.ndarray
+        Reference point on the dislocation line.
+    direction : np.ndarray
+        Direction vector of the dislocation line (will be normalized).
+    selected_point_index : float
+        Position along the dislocation line (relative to centroid).
+    r : float
+        Inner radius of the cylindrical shell.
+    dr : float
+        Radial thickness of the shell.
+    slice_thickness : float, optional
+        Half-thickness along the dislocation line (local z-axis).
+
+    Returns
+    -------
+    circular_mask : np.ndarray
+        Binary mask defining the cylindrical shell region.
+    polar_angles_masked : np.ndarray
+        Polar angle (θ) in the local transverse plane, defined only inside the mask.
+    displacement_vectors : np.ndarray
+        Absolute voxel coordinates of masked points (shape: [nx, ny, nz, 3]).
+    radial_distance_masked : np.ndarray
+        Radial distance from the dislocation line (only inside the mask).
+    direction : np.ndarray
+        Normalized direction vector of the dislocation line.
+    """
+    selected_point_index = selected_point_index / 2
+
     direction = direction / np.linalg.norm(direction)
-
-    # Compute the disk center based on the selected point index along the direction
     disk_center = centroid + selected_point_index * direction
 
-    # Define the local Z-axis (parallel to the direction vector)
     z_axis = direction
 
-    # Define a random perpendicular vector to the Z-axis as the X-axis
     random_vector = (
         np.array([1, 0, 0]) if np.abs(z_axis[0]) < 0.9 else np.array([0, 1, 0])
     )
     x_axis = np.cross(z_axis, random_vector)
     x_axis = x_axis / np.linalg.norm(x_axis)
 
-    # Define the Y-axis as orthogonal to both Z and X
     y_axis = np.cross(z_axis, x_axis)
 
-    # Generate a grid of all voxel indices
     grid_x, grid_y, grid_z = np.meshgrid(
         np.arange(data_shape[0]),
         np.arange(data_shape[1]),
@@ -103,19 +114,15 @@ def create_circular_mask(
     )
     grid_points = np.vstack([grid_x.ravel(), grid_y.ravel(), grid_z.ravel()]).T
 
-    # Shift grid points relative to the disk center
     shifted_points = grid_points - disk_center
 
-    # Convert the shifted points to the local cylindrical coordinate system
     local_x = np.dot(shifted_points, x_axis)
     local_y = np.dot(shifted_points, y_axis)
     local_z = np.dot(shifted_points, z_axis)
 
-    # Compute the radial distances and polar angles
     radial_distances = np.sqrt(local_x**2 + local_y**2)
     polar_angles = np.arctan2(local_y, local_x)
 
-    # Create the circular mask within the specified radius range and slice thickness
     circular_mask = np.zeros(data_shape, dtype=np.uint8)
     circular_mask_flat = (
         (radial_distances >= r)
@@ -124,24 +131,29 @@ def create_circular_mask(
     )
     circular_mask.flat[circular_mask_flat] = 1
 
-    # Polar angles within the mask
     polar_angles_masked = np.zeros(data_shape, dtype=np.float32)
     polar_angles_masked.flat[circular_mask_flat] = polar_angles[
         circular_mask_flat
     ]
 
-    # Compute displacement vectors from disk center to masked points
-    displacement_vectors = np.zeros(
-        (*data_shape, 3), dtype=np.float32
-    )  # 3D vector field
-    displacement_vectors_flat = grid_points[
-        circular_mask_flat
-    ]  # Select only masked points
+    displacement_vectors = np.zeros((*data_shape, 3), dtype=np.float32)
+    displacement_vectors_flat = grid_points[circular_mask_flat]
     displacement_vectors.reshape(-1, 3)[circular_mask_flat] = (
-        displacement_vectors_flat  # Assign vectors
+        displacement_vectors_flat
     )
 
-    return circular_mask, polar_angles_masked, displacement_vectors, direction
+    radial_distance_masked = np.zeros(data_shape, dtype=np.float32)
+    radial_distance_masked.flat[circular_mask_flat] = radial_distances[
+        circular_mask_flat
+    ]
+
+    return (
+        circular_mask,
+        polar_angles_masked,
+        displacement_vectors,
+        radial_distance_masked,
+        direction,
+    )
 
 
 def plot_phase_around_dislo(
@@ -155,35 +167,61 @@ def plot_phase_around_dislo(
     slice_thickness=1,
     selected_point_index=0,
     save_vti=False,
-    fig_title=None,
-    plot_debug=True,
     save_path=None,
     voxel_sizes=(1, 1, 1),
 ):
     """
-    Plot the phase around a dislocation.
+    Extract and analyze the phase distribution around a dislocation
+    using a cylindrical shell sampling.
 
-    Args:
-        amp: The amplitude data.
-        phase: The phase data.
-        selected_dislocation_data: The selected dislocation data.
-        r: The radius of the circular mask.
-        dr: The thickness of the circular mask.
-    Plot the phase around a dislocation.
-    Args:
-        amp: The amplitude data.
-        phase: The phase data.
-        selected_dislocation_data: The selected dislocation data.
-        r: The radius of the circular mask.
-        dr: The thickness of the circular mask.
-        centroid: The centroid of the dislocation.
-        direction: The direction of the dislocation.
+    Parameters
+    ----------
+    amp : np.ndarray
+        Amplitude volume.
+    phase : np.ndarray
+        Phase volume.
+    selected_dislocation_data : np.ndarray
+        Binary or labeled dislocation volume.
+    r : float
+        Inner radius of the cylindrical shell.
+    dr : float
+        Shell thickness.
+    centroid : np.ndarray
+        Dislocation line centroid.
+    direction : np.ndarray
+        Dislocation line direction.
+    slice_thickness : float, optional
+        Thickness along the dislocation line.
+    selected_point_index : float, optional
+        Position along the dislocation line.
+    save_vti : bool, optional
+        Whether to export results as VTI.
+    save_path : str or Path, optional
+        Output path for VTI file.
+    voxel_sizes : tuple, optional
+        Voxel size for VTI export.
+
+    Returns
+    -------
+    masked_region_phase : np.ndarray
+        Phase restricted to the cylindrical shell.
+    polar_angles : np.ndarray
+        Polar angles in the shell.
+    circular_mask : np.ndarray
+        Binary shell mask.
+    displacement_vectors : np.ndarray
+        Coordinates of masked voxels.
+    radial_distance_masked : np.ndarray
+        Radial distances inside the shell.
+    direction : np.ndarray
+        Normalized dislocation direction.
     """
     # create the circular mask and polar angle map
     (
         circular_mask,
         polar_angles,
         displacement_vectors,
+        radial_distance_masked,
         direction,
     ) = create_circular_mask(
         selected_dislocation_data.shape,
@@ -211,6 +249,7 @@ def plot_phase_around_dislo(
             "vect_x": vect_x,
             "vect_y": vect_y,
             "vect_z": vect_z,
+            "radial_distance": radial_distance_masked,
         }
         save_as_vti(
             output_path=save_path, voxel_size=tuple(voxel_sizes), **dict_to_vti
@@ -220,5 +259,6 @@ def plot_phase_around_dislo(
         polar_angles,
         circular_mask,
         displacement_vectors,
+        radial_distance_masked,
         direction,
     )
