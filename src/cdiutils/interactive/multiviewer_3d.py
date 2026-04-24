@@ -254,8 +254,9 @@ class MultiVolumeViewer(widgets.Box):
         CBAR_LEN=0.7,
         render_workers: int | None = None,
         render_in_flight: int | None = None,
-        rendering_mode: Literal["safe", "fast", "process"] = "safe",export_width: int = 1500, export_height: int = 1200,
-
+        rendering_mode: Literal["safe", "fast", "process"] = "safe",
+        export_width: int = 1500,
+        export_height: int = 1200,
     ):
         super().__init__()
 
@@ -2807,16 +2808,20 @@ class MultiVolumeViewer(widgets.Box):
             if getattr(self, "_export_task", None) is task and task.done():
                 self._export_task = None
 
-    async def run_actions_async(self, actions: list[dict], stop_on_error: bool = True):
+    async def run_actions_async(
+        self, actions: list[dict], stop_on_error: bool = True
+    ):
         results = self.run_actions(actions, stop_on_error=stop_on_error)
 
         for spec in actions:
             action = spec.get("action")
-            if action in ("animate_layer", "animate_rotation") and spec.get("wait", False):
+            if action in ("animate_layer", "animate_rotation") and spec.get(
+                "wait", False
+            ):
                 await self.wait_for_export()
 
         return results
-    
+
     async def animate_layer_and_wait(self, **spec):
         spec = {"action": "animate_layer", **spec}
         self.run_actions([spec])
@@ -2826,6 +2831,7 @@ class MultiVolumeViewer(widgets.Box):
         spec = {"action": "animate_rotation", **spec}
         self.run_actions([spec])
         return await self.wait_for_export()
+
     # =========================
     # Create layer callback
     # =========================
@@ -4947,7 +4953,7 @@ class MultiVolumeViewer(widgets.Box):
                 font=self._bold_font(self.fontsize * 1.5),
                 side="top",
             ),
-            tickfont=self._bold_font(self.fontsize*1.5)
+            tickfont=self._bold_font(self.fontsize * 1.5)
             | dict(color=self._colorbar_tick_color()),
             thickness=28,
             # theme-aware outline
