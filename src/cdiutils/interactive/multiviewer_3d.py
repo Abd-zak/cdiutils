@@ -5572,7 +5572,7 @@ class MultiVolumeViewer(widgets.Box):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path = str(out_path)
-        
+
         fps = int(fps)
         if fps <= 0:
             raise ValueError("fps must be >= 1")
