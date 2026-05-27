@@ -255,14 +255,20 @@ class MultiVolumeViewer(widgets.Box):
         render_workers: int | None = None,
         render_in_flight: int | None = None,
         rendering_mode: Literal["safe", "fast", "process"] = "safe",
-        export_width: int = 1500,
-        export_height: int = 1200,
+        export_width: int | None = None,
+        export_height: int | None = None,
     ):
         super().__init__()
 
         self.cmap_options = self._get_all_supported_cmaps()
-        self.export_width = export_width
-        self.export_height = export_height
+        if export_width is None:
+            export_width = int(figsize[0] * 200)
+
+        if export_height is None:
+            export_height = int(figsize[1] * 130)
+
+        self.export_width = int(export_width)
+        self.export_height = int(export_height)
         # Global rendering safety switch
         self.force_fixed_color_range = (
             False  # default: disable auto-range everywhere (export + UI)
@@ -5563,10 +5569,10 @@ class MultiVolumeViewer(widgets.Box):
                     f"Frame {i} is not valid PNG bytes (missing PNG signature)."
                 )
 
-        out_dir = os.path.dirname(out_path)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path = str(out_path)
+        
         fps = int(fps)
         if fps <= 0:
             raise ValueError("fps must be >= 1")
@@ -6271,12 +6277,16 @@ class MultiVolumeViewer(widgets.Box):
             return
 
         fmt = (self.anim_format.value or "mp4").lower()
-        name = (self.anim_name.value or "layer_anim").strip()
-        if not name:
-            name = "layer_anim"
+        raw = (self.anim_name.value or "layer_anim").strip()
 
-        out_path = Path(os.getcwd()) / f"{name}.{fmt}"
+        p = Path(raw)
 
+        if raw.endswith(("/", "\\")) or (p.exists() and p.is_dir()):
+            out_path = (p / "layer_anim").with_suffix(f".{fmt}")
+        else:
+            if p.suffix:
+                p = p.with_suffix("")
+            out_path = p.with_suffix(f".{fmt}")
         # values to animate
         lo, hi = map(float, self.anim_range.value)
         v0, v1 = float(lo), float(hi)
