@@ -55,7 +55,11 @@ class XFELLoader(H5TypeLoader):
         "detector_inplane_angle": "delta",
     }
 
-    authorised_detector_names = ("agipd", "jungfrau", "epix")
+    authorised_detector_names = ("agipd", "jungfrau")
+    detector_pixel_sizes = {
+        "agipd": 0.2,  # mm
+        "jungfrau": 0.075,  # mm
+    }
 
     def __init__(
         self,
@@ -102,17 +106,27 @@ class XFELLoader(H5TypeLoader):
         )
 
         self.experiment_file_path = Path(self.experiment_file_path)
+        if detector_name is not None:
+            detector_name = detector_name.lower()
+
+            if detector_name not in self.authorised_detector_names:
+                raise ValueError(
+                    f"Unsupported detector '{detector_name}'. "
+                    f"Supported detectors: {self.authorised_detector_names}"
+                )
+
+            self.detector_name = detector_name
 
     def _get_run(self):
         """Return the EXtra-data run object."""
         run_dir_name = self.sample_name or self.run_dir_name
         run_dir = self.experiment_file_path.parent / run_dir_name
         aliases_file = run_dir / self.aliases_file_name
-    
+
         run = RunDirectory(run_dir)
         if aliases_file.exists():
             run = run.with_aliases(aliases_file)
-    
+
         return run
 
     def _get_run_vars(self, scan: int = None):
@@ -288,10 +302,19 @@ class XFELLoader(H5TypeLoader):
         cch1 = detector_shape[0] // 2
         cch2 = detector_shape[1] // 2
 
+        detector_name = (self.detector_name or "").lower()
+        pixel_size = self.detector_pixel_sizes.get(detector_name)
+
+        if pixel_size is None:
+            raise ValueError(
+                f"Unknown XFEL detector pixel size for detector_name={self.detector_name!r}. "
+                f"Known detectors are: {sorted(self.detector_pixel_sizes)}"
+            )
+
         return {
             "distance": float(sdd),  # mm
-            "pwidth1": 0.2,  # mm
-            "pwidth2": 0.2,  # mm
+            "pwidth1": pixel_size,  # mm
+            "pwidth2": pixel_size,  # mm
             "cch1": cch1,
             "cch2": cch2,
             "detrot": 0,

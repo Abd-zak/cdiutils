@@ -805,6 +805,8 @@ class Loader(ABC):
             mask = np.zeros(shape=(512, 1028))
         elif detector_name.lower() == "merlin":
             mask = np.zeros(shape=(512, 512))
+        elif detector_name.lower() == "jungfrau":
+            mask = np.zeros(shape=(512, 1028))
         elif detector_name.lower() == "agipd":
             mask = np.zeros(shape=(1325, 1196))
         else:
