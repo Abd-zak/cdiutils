@@ -14,7 +14,19 @@ from .nanomax import NanoMAXLoader
 from .p10 import P10Loader
 from .sixs import SIXSLoader
 from .vtk import save_as_vti
-from .xfel import XFELLoader, load_xfel
+
+try:
+    from .xfel import XFELLoader, load_xfel
+except ImportError:
+    XFELLoader = None
+    load_xfel = None
+
+# TODO:
+# EXtra-data is currently a dependency of XFELLoader but is not
+# supported on native Windows (e.g. dependency on the Unix-only
+# `resource` module). Investigate replacing the required EXtra-data
+# functionality with internal HDF5-based readers or making the XFEL
+# backend fully optional/cross-platform.
 
 __all__ = [
     "Loader",
