@@ -12,7 +12,7 @@ import numpy as np
 from cdiutils.io.loader import H5TypeLoader
 
 try:
-    from extra_data import RunDirectory
+    from extra_data import RunDirectory, open_run
 except ImportError as exc:
     raise ImportError(
         "XFELLoader requires EXtra-data. "
@@ -116,18 +116,23 @@ class XFELLoader(H5TypeLoader):
                 )
 
             self.detector_name = detector_name
-
-    def _get_run(self):
+    def _get_run(self, scan: int = None, sample_name: str = None):
         """Return the EXtra-data run object."""
-        run_dir_name = self.sample_name or self.run_dir_name
-        run_dir = self.experiment_file_path.parent / run_dir_name
-        aliases_file = run_dir / self.aliases_file_name
-
-        run = RunDirectory(run_dir)
-        if aliases_file.exists():
-            run = run.with_aliases(aliases_file)
-
+        scan, sample_name = self._check_scan_sample(scan, sample_name)
+    
+        run = open_run(sample_name, scan)
         return run
+    # def _get_run(self):
+    #     """Return the EXtra-data run object."""
+    #     # run_dir_name = self.sample_name or self.run_dir_name
+    #     # run_dir = self.experiment_file_path.parent / run_dir_name
+    #     # aliases_file = run_dir / self.aliases_file_name
+
+    #     # run = RunDirectory(run_dir)
+    #     # if aliases_file.exists():
+    #     #     run = run.with_aliases(aliases_file)
+        
+    #     return run
 
     def _get_run_vars(self, scan: int = None):
         """Return DAMNIT variables for one XFEL run/scan."""
@@ -137,54 +142,42 @@ class XFELLoader(H5TypeLoader):
         db = Damnit(damnit_path)
 
         return db[scan]
-
+    
     def _read_images(self, scan: int = None):
-        """Read the detector image variable from DAMNIT."""
+        """Read the selected detector image variable from DAMNIT."""
         run_vars = self._get_run_vars(scan)
+
+        if self.data_key in run_vars.keys():
+            data = run_vars[self.data_key].read()
+            print(f"\nUsing DAMNIT image variable: {self.data_key!r}")
+            return data
+
         available_keys = list(run_vars.keys())
 
-        try:
-            return run_vars[self.data_key].read()
+        candidates = []
+        for key in available_keys:
+            try:
+                data = run_vars[key].read()
+                shape = np.shape(data)
+                if len(shape) in (3, 4):
+                    candidates.append((key, shape))
+            except Exception:
+                continue
 
-        except KeyError as exc:
-            # Preferred fallback: xarray dataset containing detector images
-            if "peak_dataset" in available_keys:
-                ds = run_vars["peak_dataset"].read()
+        if candidates:
+            print(f"\nRequested data_key={self.data_key!r} was not found.")
+            print("Available 3D/4D DAMNIT datasets:")
+            for key, shape in candidates:
+                print(f"  {key:30s} shape={shape}")
 
-                if "images" in ds:
-                    print(
-                        f"\nDAMNIT variable {self.data_key!r} was not found."
-                        "\nUsing fallback dataset: 'peak_dataset/images'"
-                    )
-                    return ds["images"]
-
-            candidates = []
-
-            for key in available_keys:
-                try:
-                    data = run_vars[key].read()
-                    shape = np.shape(data)
-
-                    if len(shape) in (3, 4):
-                        candidates.append((key, shape))
-
-                except Exception:
-                    continue
-
-            if candidates:
-                print(
-                    f"\nDAMNIT variable {self.data_key!r} was not found.\n"
-                    "Available 3D/4D datasets:"
-                )
-
-                for key, shape in candidates:
-                    print(f"  {key:30s} shape={shape}")
-
-            raise KeyError(
-                f"DAMNIT variable {self.data_key!r} was not found "
-                f"for scan/run {scan}."
-            ) from exc
-
+        raise KeyError(
+            f"Requested DAMNIT variable {self.data_key!r} was not found "
+            f"for scan/run {scan}."
+        )
+        raise KeyError(
+            f"None of the DAMNIT image variables {image_keys!r} were found "
+            f"for scan/run {scan}."
+        )
     def _reduce_pulses(self, images, pulse_reduction: str = None):
         """Reduce the XFEL pulse dimension if present."""
         reduction = (
@@ -192,15 +185,15 @@ class XFELLoader(H5TypeLoader):
             if pulse_reduction is None
             else pulse_reduction
         )
-
+    
         if reduction is None:
             return images
-
+    
         if not hasattr(images, "dims"):
             return images
-
+    
         pulse_dim = self.pulse_dimension
-
+    
         if pulse_dim not in images.dims:
             if "pulseId" in images.dims:
                 pulse_dim = "pulseId"
@@ -208,13 +201,13 @@ class XFELLoader(H5TypeLoader):
                 pulse_dim = "pulseIndex"
             else:
                 return images
-
+    
         if reduction == "mean":
             return images.mean(pulse_dim)
-
+    
         if reduction == "sum":
             return images.sum(pulse_dim)
-
+    
         raise ValueError("pulse_reduction should be 'mean', 'sum', or None.")
 
     @xfel_safe_load
@@ -235,17 +228,17 @@ class XFELLoader(H5TypeLoader):
                 (rocking_position, detector_y, detector_x)
         """
         scan, sample_name = self._check_scan_sample(scan, sample_name)
-
+        
         images = self._read_images(scan)
-
+        
         print("\n=== BEFORE PULSE REDUCTION ===")
         print(f"type  : {type(images).__name__}")
         print(f"shape : {images.shape}")
         print(f"dims  : {getattr(images, 'dims', None)}")
         print(f"reduction : {pulse_reduction or self.pulse_reduction}")
-
+        
         images = self._reduce_pulses(images, pulse_reduction)
-
+        
         print("\n=== AFTER PULSE REDUCTION ===")
         print(f"type  : {type(images).__name__}")
         print(f"shape : {images.shape}")
@@ -309,6 +302,8 @@ class XFELLoader(H5TypeLoader):
         scan, sample_name = self._check_scan_sample(scan, sample_name)
 
         angles, scanned_motor_name = self._load_geometry_angles(
+            scan=scan,
+            sample_name=sample_name,
             theta=theta,
             chi=chi,
             phi=phi,
@@ -351,12 +346,15 @@ class XFELLoader(H5TypeLoader):
         }
 
     @xfel_safe_load
-    def load_det_calib_params(self) -> dict:
+    def load_det_calib_params(self, scan: int = None, sample_name: str = None) -> dict:
         """Load XFEL detector calibration parameters."""
-        run = self._get_run()
-        sdd = np.nanmedian(run.alias["sdd"].ndarray())
+        run_vars = self._get_run_vars(scan=scan)
+        sdd = run_vars["sdd"].read() 
 
-        detector_shape = self.load_detector_shape()
+        detector_shape = self.load_detector_shape(
+            scan=scan,
+            sample_name=sample_name,
+        )
         cch1 = detector_shape[0] // 2
         cch2 = detector_shape[1] // 2
 
@@ -381,27 +379,34 @@ class XFELLoader(H5TypeLoader):
         }
 
     @xfel_safe_load
-    def load_energy(self, scan: int = None) -> float:
+    def load_energy(self, scan: int = None, sample_name: str = None) -> float:
         """Load photon energy in eV."""
-        run = self._get_run()
-
+        run = self._get_run(scan=scan, sample_name=sample_name)
         # Direct energy aliases
         for alias in ("energy-kev", "undulator-energy"):
             if alias in run._aliases:
                 energy = run.alias[alias].ndarray()
                 energy = float(np.nanmean(energy))
-
+    
                 # If value looks like keV, convert to eV
                 if energy < 100:
                     energy *= 1e3
-
+    
                 return energy
+    
 
     @xfel_safe_load
-    def load_detector_shape(self, scan: int = None) -> tuple:
+    def load_detector_shape(
+        self,
+        scan: int = None,
+        sample_name: str = None,
+    ) -> tuple:
         """Return detector image shape after pulse reduction."""
-        data = self.load_detector_data(scan=scan, pulse_reduction="mean")
-
+        data = self.load_detector_data(
+            scan=scan,
+            sample_name=sample_name,
+            pulse_reduction="mean"
+        )
         if data.ndim != 3:
             raise ValueError(
                 f"Expected detector data with 3 dimensions, got shape {data.shape}."
@@ -442,6 +447,8 @@ class XFELLoader(H5TypeLoader):
 
     def _load_geometry_angles(
         self,
+        scan: int = None,
+        sample_name: str = None,
         theta=None,
         chi=None,
         phi=None,
@@ -452,8 +459,8 @@ class XFELLoader(H5TypeLoader):
         twotheta_offset=0.0,
     ):
         """Load theta, chi, phi, and twotheta from EXtra-data aliases."""
-
-        run = self._get_run()
+    
+        run = self._get_run(scan=scan, sample_name=sample_name)
 
         angles = {
             "theta": theta,
@@ -462,7 +469,7 @@ class XFELLoader(H5TypeLoader):
             "twotheta": twotheta,
         }
 
-        images = self._read_images()
+        images = self._read_images(scan)
 
         if "position" in images.coords and angles["theta"] is None:
             scanned_motor_name = "theta"
