@@ -27,7 +27,6 @@ DEFAULT_PIPELINE_PARAMS = {
     "detector_name": None,  # detector type (e.g., 'Maxipix')
     "flat_field": None,  # flat field correction array path
     "alien_mask": None,  # mask for defective pixels
-
     # XFEL-specific
     "data_key": "peak_images",
     "pulse_dimension": "pulseIndex",

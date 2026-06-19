@@ -591,19 +591,16 @@ class BcdiPipeline(Pipeline):
             "detector_name",
             "alien_mask",
             "flat_field",
-
             # XFEL-specific
             "data_key",
             "pulse_dimension",
             "pulse_reduction",
         )
         loader_metadata = {
-            k: self.params[k]
-            for k in loader_keys
-            if k in self.params
+            k: self.params[k] for k in loader_keys if k in self.params
         }
 
-        loader = Loader.from_setup(**loader_metadata)   
+        loader = Loader.from_setup(**loader_metadata)
 
         if self.params.get("detector_name") is None:
             self.params["detector_name"] = loader.detector_name
