@@ -93,15 +93,18 @@ class Plotter:
                     Maximum number of frames rendered concurrently.
 
                 rendering_mode: Literal['safe', 'fast', 'process']
-                    Rendering backend strategy used during animation export.
+                    Rendering concurrency strategy used during image and
+                    animation export.
+
+                rendering_backend: Literal['auto', 'kaleido', 'vtk']
+                    Static-image rendering backend. ``auto`` tests Kaleido
+                    first and falls back to VTK when needed.
+
                 export_width: int
-                    Fixed width (pixels) for animation export (GIF/MP4).
-                    Overrides Plotly autosizing during offscreen rendering.
+                    Fixed export width in pixels for PNG, GIF, and MP4 output.
 
                 export_height: int
-                    Fixed height (pixels) for animation export.
-                    Required because notebook display size is not preserved
-                    during backend export (kaleido).
+                    Fixed export height in pixels for PNG, GIF, and MP4 output.
             Ignored for all other plot modes.
 
     Attributes:
@@ -214,17 +217,22 @@ class Plotter:
                         Maximum number of in-flight render tasks.
 
                     rendering_mode: Literal['safe', 'fast', 'process']
-                        Rendering backend strategy (for animation).
-                export_width: int
-                    Fixed width (pixels) for animation export (GIF/MP4).
-                    Overrides Plotly autosizing during offscreen rendering.
+                        Rendering concurrency strategy used during image and
+                        animation export.
 
-                export_height: int
-                    Fixed height (pixels) for animation export.
-                    Required because notebook display size is not preserved
-                    during backend export (kaleido).
+                    rendering_backend: Literal['auto', 'kaleido', 'vtk']
+                        Static-image rendering backend. ``auto`` tests Kaleido
+                        first and falls back to VTK when needed.
+
+                    export_width: int
+                        Fixed export width in pixels for PNG, GIF, and MP4
+                        output.
+
+                    export_height: int
+                        Fixed export height in pixels for PNG, GIF, and MP4
+                        output.
         """
-        # ---- legacy behaviour ----
+        # Store plotting configuration and loaded data.
         self.data_array = None
         self.data_dict = None
         self.plot = plot
@@ -233,10 +241,10 @@ class Plotter:
         self.figsize = figsize
         self.fontsize = fontsize
         self.title = title
-        self.layers_kwargs = layers_kwargs or {}
+        self.layers_kwargs = dict(layers_kwargs or {})
         self.viewer = None
 
-        # 🔒 STRICT: MultiVolumeViewer only accepts dict
+        # MultiVolumeViewer requires a mapping of named 3D arrays.
         if self.plot == "layers":
             if not isinstance(data, dict):
                 print(
@@ -372,13 +380,17 @@ class Plotter:
         elif self.plot == "layers":
             from .multiviewer_3d import MultiVolumeViewer
 
-            self.layers_kwargs.pop("figsize", None)
-            self.layers_kwargs.pop("fontsize", None)
+            # Plotter owns ``figsize`` and ``fontsize``. Remove duplicate
+            # values from a local copy so the caller's dictionary is preserved.
+            viewer_kwargs = dict(self.layers_kwargs)
+            viewer_kwargs.pop("figsize", None)
+            viewer_kwargs.pop("fontsize", None)
+
             self.viewer = MultiVolumeViewer(
                 self.data_dict,
                 fontsize=self.fontsize,
                 figsize=self.figsize,
-                **self.layers_kwargs,
+                **viewer_kwargs,
             )
             self.viewer.show()
             return

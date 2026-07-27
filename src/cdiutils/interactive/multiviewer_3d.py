@@ -1,110 +1,76 @@
 """
-MultiVolumeViewer — Interactive 3D multi-volume visualization widget (ipywidgets + Plotly).
+Interactive 3D multi-volume viewer for Jupyter notebooks.
 
-This module provides an interactive Jupyter widget for exploring and comparing
-multiple 3D scalar fields (e.g., amplitude, phase, strain, masks) defined on the
-same voxel grid. The viewer is designed as a lightweight, ParaView-like tool for
-notebooks, supporting isosurfaces, axis-aligned slicing, arbitrary planes, and
-half-space clipping.
+The module provides :class:`MultiVolumeViewer`, an ipywidgets/Plotly interface
+for exploring multiple scalar volumes defined on a shared voxel grid. It
+supports raw-volume isosurfaces, axis-aligned slices, arbitrary planes,
+half-space clipping, per-layer transforms, configurable coloring, and animation
+export.
 
-Main features
--------------
-• Multiple raw volume layers
-  - Display several 3D scalar fields simultaneously (isosurfaces)
-  - Toggle visibility per layer
-  - Independent threshold, colormap, opacity, lighting, and color scaling
-  - Optional mask-mode (binary surface extraction)
+Rendering and export
+--------------------
+Interactive visualization always uses Plotly. Static animation frames can be
+rendered with either of two independent backends:
 
-• Derived layers
-  - Slice layers:
-      * Axis-aligned slicing with adjustable position and thickness
-      * Treated as independent layers (not tied to the source after creation)
-  - Plane layers:
-      * Arbitrary plane defined by normal + origin in physical coordinates
-      * Optional thickness (slab averaging) and finite extent
-  - Clip layers:
-      * Half-space clipping of a raw volume using a plane (normal + origin)
-      * Select which side of the plane is kept (up / down)
+``rendering_backend="kaleido"``
+    Uses Plotly/Kaleido. This preserves Plotly appearance most closely and
+    requires a working Kaleido installation plus its browser dependency.
 
-• Per-layer rigid transforms (visual only)
-  - Apply rotation (Rx, Ry, Rz) and translation (Tx, Ty, Tz) to any layer
-  - Transforms act in the viewer’s plot coordinate system and affect rendering
-    geometry only (do not modify underlying voxel data)
-  - New layers start untransformed by default
+``rendering_backend="vtk"``
+    Converts visible Plotly ``Mesh3d`` and ``Surface`` traces to VTK and renders
+    them offscreen. Linux systems using ``vtkXOpenGLRenderWindow`` require a
+    usable X display; the module reuses the current display or starts Xvfb.
 
-• Flexible coloring
-  - Color by:
-      * the layer’s own scalar field
-      * another raw volume
-      * spatial coordinates (x, y, z)
-      * a constant value
-  - Independent colorbars per visible layer
+``rendering_backend="auto"``
+    Tests Kaleido first, then VTK. When an explicitly selected backend fails its
+    startup test, the other backend is attempted and a diagnostic warning is
+    emitted. If neither backend works, initialization raises a detailed error.
 
-• Robust NaN handling
-  - Per-layer NaN policy (do nothing, replace by mean/zero/min/max)
-  - For slice and plane layers:
-      * true “holes” when NaN policy is set to “none”
-      * NaN regions are hidden (opacity = 0), similar to ParaView behavior
+Rendering concurrency is configured separately with ``rendering_mode``:
 
-• Physical coordinate consistency
-  - Full support for anisotropic voxel sizes
-  - Slices/planes/clips are defined in physical coordinates derived from voxel size
-  - Optional axis unit labels (e.g., X (nm), Y (nm), Z (nm)) via the `unit` argument
+``safe``
+    Serializes rendering calls. This is the recommended default.
+``fast``
+    Allows concurrent thread-based rendering.
+``process``
+    Uses process-based rendering where supported.
 
-• Interactive UI
-  - Layer creation and editing panels
-  - Collapsible sections for lighting and transforms in the edit panel
-  - Live updates of geometry and coloring
-  - Dark / light theme toggle
-  - Optional automatic camera rotation
+Animation export
+----------------
+The viewer exports camera rotations and layer-parameter sweeps as MP4 or GIF.
+Exports run asynchronously, use bounded in-flight rendering, expose progress and
+cancellation controls, and restore the edited layer state when complete.
 
-• Animation export (rotation + layer parameter sweeps)
-  - Master mode selector:
-      * Rotation: export a camera orbit animation
-      * Layer: export an animation by sweeping a layer parameter (opacity/pos/offset)
-  - Output formats:
-      * MP4 (H.264 via imageio/ffmpeg)
-      * GIF (imageio GIF, or optional ffmpeg palette workflow for higher quality)
-  - Non-blocking export in notebooks:
-      * Export runs in an asyncio task (tracked in self._export_task)
-      * A Stop button sets a shared cancellation flag (self._anim_cancel) and cancels the task
-  - Bounded parallelism during frame rendering:
-      * render_workers: size of the rendering worker pool
-      * render_in_flight: maximum number of frames concurrently in progress (<= workers)
-      * Rotation export streams frames directly to the writer (no large frames list)
-      * Layer export supports preview updates and restores layer state at the end
-  - Rendering safety modes (Plotly/Kaleido):
-      * rendering_mode="safe": serialize kaleido calls with a lock (stable)
-      * rendering_mode="fast": allow concurrent to_image calls (faster, may be less stable)
-• Export configuration (animation rendering)
-    - export_width:
-        * Fixed width (pixels) for exported frames (GIF/MP4)
-        * Overrides Plotly autosizing during offscreen rendering
-    - export_height:
-        * Fixed height (pixels) for exported frames
-        * Must be consistent with layout aspect ratio for correct framing
-    - Note:
-        * Required because notebook display size (autosize=True) is not reliable
-            during backend export (kaleido)
-Typical use cases
+Main capabilities
 -----------------
-• Visualization of BCDI reconstructions (amplitude, phase, strain)
-• Inspection of defect structures via slices, planes, and clipped volumes
-• Rapid notebook-based exploration without exporting to external viewers
-• Exporting publication-ready rotation animations or layer-sweep animations
+- Multiple raw and derived layers with independent visibility and styling.
+- Isosurfaces, slices, arbitrary planes, and half-space clips.
+- Per-layer opacity, threshold, colormap, lighting, color range, and transforms.
+- Coloring by the layer itself, another raw field, coordinates, or a constant.
+- Configurable NaN replacement or transparent holes for slice/plane layers.
+- Physical coordinates with anisotropic voxel size and optional axis units.
+- Light and dark interactive themes, camera control, and automatic rotation.
+- Fixed-size PNG frame rendering for reproducible GIF and MP4 output.
 
-Dependencies
-------------
+Core dependencies
+-----------------
 - numpy
-- scipy (RegularGridInterpolator)
-- scikit-image (marching_cubes)
-- plotly (+ kaleido for static image export)
+- scipy
+- scikit-image
+- plotly
 - ipywidgets
-- matplotlib (for colormaps fallback)
-- imageio (video writing; ffmpeg backend recommended for mp4)
-- ffmpeg (optional; used for palette-based GIF export)
+- matplotlib
+- imageio and imageio-ffmpeg
 
-The widget is intended for interactive use inside Jupyter environments.
+Optional export dependencies
+----------------------------
+- kaleido and its supported browser runtime for the Kaleido backend
+- vtk for the VTK backend
+- Xvfb and xdpyinfo on Linux when VTK uses an X11 render window
+- ffmpeg for MP4 export and palette-based GIF export
+
+The module is intended for interactive scientific visualization, including BCDI
+reconstruction analysis and publication-quality animation export.
 """
 
 # =========================
@@ -113,12 +79,15 @@ The widget is intended for interactive use inside Jupyter environments.
 
 # --- standard library ---
 import asyncio
+import base64
 import concurrent.futures
 import io
 import math
 import os
+import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -139,7 +108,7 @@ from scipy.interpolate import RegularGridInterpolator
 from skimage.measure import marching_cubes
 
 # =========================
-# Optional dependencies / fallbacks
+# Optional integrations and dependency checks
 # =========================
 try:
     from .volume import _extract_isosurface_with_values, colorcet_to_plotly
@@ -179,14 +148,694 @@ CBAR_X0 = 1.02  # start just outside the scene
 CBAR_DX = 0.2  # horizontal spacing per colorbar
 
 # =========================
-# Pure helpers (no class state)
+# Rendering backend helpers
 # =========================
 
 
-def _render_fig_json_to_png(fig_json: dict, w: int, h: int, s: int) -> bytes:
+_XVFB_PROCESS = None
+_XVFB_DISPLAY = None
+
+
+def _x_display_is_usable(display_name: str | None) -> bool:
+    """Return True when an X display can be contacted."""
+    if not display_name:
+        return False
+    xdpyinfo = shutil.which("xdpyinfo")
+    if xdpyinfo is None:
+        # We cannot probe it, so leave an existing DISPLAY untouched.
+        return bool(display_name)
+    probe = subprocess.run(
+        [xdpyinfo, "-display", str(display_name)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+def _find_free_x_display(start: int = 90, end: int = 200) -> str:
+    """Find an unused local X11 display number."""
+    for number in range(int(start), int(end)):
+        socket_path = Path(f"/tmp/.X11-unix/X{number}")
+        lock_path = Path(f"/tmp/.X{number}-lock")
+        if not socket_path.exists() and not lock_path.exists():
+            return f":{number}"
+    raise RuntimeError("No free X display number was found.")
+
+
+def ensure_x_display(
+    display_name: str | None = None,
+    screen: str = "1920x1080x24",
+    timeout: float = 10.0,
+) -> str:
+    """Ensure that an X display is available for vtkXOpenGLRenderWindow.
+
+    Existing valid displays are reused. On Linux, Xvfb is started only when
+    needed. The process is retained at module scope for the lifetime of the
+    Python kernel.
+    """
+    global _XVFB_PROCESS, _XVFB_DISPLAY
+
+    current = os.environ.get("DISPLAY")
+    if _x_display_is_usable(current):
+        return str(current)
+
+    if platform.system() != "Linux":
+        raise RuntimeError(
+            "VTK Xvfb rendering is supported only on Linux. "
+            "Use Kaleido or a native EGL/OSMesa VTK build on this system."
+        )
+
+    xvfb = shutil.which("Xvfb")
+    if xvfb is None:
+        raise RuntimeError(
+            "No usable X display was found and Xvfb is not installed."
+        )
+
+    if _XVFB_PROCESS is not None and _XVFB_PROCESS.poll() is None:
+        if _x_display_is_usable(_XVFB_DISPLAY):
+            os.environ["DISPLAY"] = str(_XVFB_DISPLAY)
+            return str(_XVFB_DISPLAY)
+
+    chosen = str(display_name or _find_free_x_display())
+    proc = subprocess.Popen(
+        [xvfb, chosen, "-screen", "0", str(screen), "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    os.environ["DISPLAY"] = chosen
+
+    deadline = time.monotonic() + float(timeout)
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        if _x_display_is_usable(chosen):
+            _XVFB_PROCESS = proc
+            _XVFB_DISPLAY = chosen
+            return chosen
+        time.sleep(0.1)
+
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    raise RuntimeError(f"Xvfb could not start on display {chosen}.")
+
+
+def _parse_plotly_color(value):
+    """Convert Plotly color strings to an RGB triple in [0, 1]."""
+    from matplotlib.colors import to_rgb
+
+    if value is None:
+        return (0.5, 0.5, 0.5)
+    text = str(value).strip()
+    if text.startswith("rgb("):
+        vals = [float(v.strip()) for v in text[4:-1].split(",")]
+        return tuple(v / 255.0 for v in vals[:3])
+    if text.startswith("rgba("):
+        vals = [float(v.strip()) for v in text[5:-1].split(",")]
+        return tuple(v / 255.0 for v in vals[:3])
+    return tuple(float(v) for v in to_rgb(text))
+
+
+def _vtk_lookup_table(colorscale, n: int = 256):
+    import vtk
+
+    stops = []
+    for item in colorscale or [[0.0, "blue"], [1.0, "red"]]:
+        try:
+            stops.append((float(item[0]), _parse_plotly_color(item[1])))
+        except Exception:
+            continue
+    if not stops:
+        stops = [(0.0, (0.0, 0.0, 1.0)), (1.0, (1.0, 0.0, 0.0))]
+    stops.sort(key=lambda item: item[0])
+
+    lut = vtk.vtkLookupTable()
+    lut.SetNumberOfTableValues(int(n))
+    lut.Build()
+    for i in range(int(n)):
+        t = i / max(1, int(n) - 1)
+        left, right = stops[0], stops[-1]
+        for j in range(len(stops) - 1):
+            if stops[j][0] <= t <= stops[j + 1][0]:
+                left, right = stops[j], stops[j + 1]
+                break
+        den = right[0] - left[0]
+        a = 0.0 if abs(den) < 1e-15 else (t - left[0]) / den
+        rgb = tuple((1.0 - a) * left[1][k] + a * right[1][k] for k in range(3))
+        lut.SetTableValue(i, rgb[0], rgb[1], rgb[2], 1.0)
+    return lut
+
+
+def _decode_plotly_array(value, dtype=float):
+    """Decode Plotly 6 typed-array JSON or ordinary array-like values."""
+    if value is None:
+        return np.asarray([], dtype=dtype)
+
+    if isinstance(value, dict) and "bdata" in value:
+        raw = base64.b64decode(value["bdata"])
+        encoded_dtype = np.dtype(value.get("dtype", "float64"))
+        arr = np.frombuffer(raw, dtype=encoded_dtype)
+
+        shape = value.get("shape")
+        if shape is not None:
+            if isinstance(shape, str):
+                dims = tuple(
+                    int(part.strip())
+                    for part in shape.replace("x", ",").split(",")
+                    if part.strip()
+                )
+            else:
+                dims = tuple(int(part) for part in shape)
+            if dims:
+                arr = arr.reshape(dims)
+
+        return arr.astype(dtype, copy=False)
+
+    return np.asarray(value, dtype=dtype)
+
+
+def _vtk_polydata_from_mesh3d(trace):
+    import vtk
+
+    x = _decode_plotly_array(trace.get("x", []), dtype=float)
+    y = _decode_plotly_array(trace.get("y", []), dtype=float)
+    z = _decode_plotly_array(trace.get("z", []), dtype=float)
+    ii = _decode_plotly_array(trace.get("i", []), dtype=np.int64)
+    jj = _decode_plotly_array(trace.get("j", []), dtype=np.int64)
+    kk = _decode_plotly_array(trace.get("k", []), dtype=np.int64)
+    if not (x.size and y.size and z.size and ii.size):
+        return None, None
+
+    points = vtk.vtkPoints()
+    points.SetNumberOfPoints(int(x.size))
+    for idx in range(x.size):
+        points.SetPoint(idx, float(x[idx]), float(y[idx]), float(z[idx]))
+
+    polys = vtk.vtkCellArray()
+    for a, b, c in zip(ii, jj, kk):
+        tri = vtk.vtkTriangle()
+        tri.GetPointIds().SetId(0, int(a))
+        tri.GetPointIds().SetId(1, int(b))
+        tri.GetPointIds().SetId(2, int(c))
+        polys.InsertNextCell(tri)
+
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(points)
+    poly.SetPolys(polys)
+
+    intensity = trace.get("intensity")
+    if intensity is not None:
+        vals = _decode_plotly_array(intensity, dtype=float).reshape(-1)
+        if vals.size == x.size:
+            scalars = vtk.vtkFloatArray()
+            scalars.SetName("intensity")
+            scalars.SetNumberOfValues(int(vals.size))
+            for idx, val in enumerate(vals):
+                scalars.SetValue(idx, float(val) if np.isfinite(val) else 0.0)
+            poly.GetPointData().SetScalars(scalars)
+    return poly, "point"
+
+
+def _vtk_polydata_from_surface(trace):
+    import vtk
+
+    x = _decode_plotly_array(trace.get("x", []), dtype=float)
+    y = _decode_plotly_array(trace.get("y", []), dtype=float)
+    z = _decode_plotly_array(trace.get("z", []), dtype=float)
+    c = _decode_plotly_array(trace.get("surfacecolor", z), dtype=float)
+    if x.ndim == 1 and z.ndim == 2:
+        x = np.broadcast_to(x[None, :], z.shape)
+    if y.ndim == 1 and z.ndim == 2:
+        y = np.broadcast_to(y[:, None], z.shape)
+    if x.shape != z.shape or y.shape != z.shape or z.ndim != 2:
+        return None, None
+
+    nr, nc = z.shape
+    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    ids = -np.ones((nr, nc), dtype=np.int64)
+    points = vtk.vtkPoints()
+    scalars = vtk.vtkFloatArray()
+    scalars.SetName("surfacecolor")
+
+    next_id = 0
+    for r in range(nr):
+        for col in range(nc):
+            if not valid[r, col]:
+                continue
+            ids[r, col] = next_id
+            points.InsertNextPoint(
+                float(x[r, col]), float(y[r, col]), float(z[r, col])
+            )
+            val = c[r, col] if c.shape == z.shape else z[r, col]
+            scalars.InsertNextValue(float(val) if np.isfinite(val) else 0.0)
+            next_id += 1
+
+    polys = vtk.vtkCellArray()
+    for r in range(nr - 1):
+        for col in range(nc - 1):
+            q = [
+                ids[r, col],
+                ids[r, col + 1],
+                ids[r + 1, col + 1],
+                ids[r + 1, col],
+            ]
+            if min(q) < 0:
+                continue
+            for tri_ids in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
+                tri = vtk.vtkTriangle()
+                for j, pid in enumerate(tri_ids):
+                    tri.GetPointIds().SetId(j, int(pid))
+                polys.InsertNextCell(tri)
+
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(points)
+    poly.SetPolys(polys)
+    poly.GetPointData().SetScalars(scalars)
+    return poly, "point"
+
+
+def _render_fig_json_to_png_vtk(
+    fig_json: dict, w: int, h: int, s: int, fontsize: int = 18
+) -> bytes:
+    """Render Plotly Mesh3d/Surface traces through VTK using an X display."""
+    ensure_x_display()
+    try:
+        import vtk
+    except Exception as exc:
+        raise RuntimeError(
+            "VTK rendering requires the 'vtk' Python package."
+        ) from exc
+
+    layout = dict(fig_json.get("layout") or {})
+    scene = dict(layout.get("scene") or {})
+    width = max(1, int(w) * max(1, int(s)))
+    height = max(1, int(h) * max(1, int(s)))
+
+    renderer = vtk.vtkRenderer()
+
+    # Render against white while keeping the output background transparent.
+    # This gives clean anti-aliased edges for figures placed on white slides.
+    renderer.SetBackground(1.0, 1.0, 1.0)
+    if hasattr(renderer, "SetBackgroundAlpha"):
+        renderer.SetBackgroundAlpha(0.0)
+
+    window = vtk.vtkRenderWindow()
+    window.SetOffScreenRendering(1)
+    window.SetAlphaBitPlanes(1)
+    window.SetSize(width, height)
+    window.SetMultiSamples(8)
+    window.AddRenderer(renderer)
+
+    scalar_bars = []
+    actors = []
+    for trace in fig_json.get("data", []):
+        t = str(trace.get("type", "")).lower()
+        if t == "mesh3d":
+            poly, _ = _vtk_polydata_from_mesh3d(trace)
+        elif t == "surface":
+            poly, _ = _vtk_polydata_from_surface(trace)
+        else:
+            continue
+        if poly is None or poly.GetNumberOfPoints() == 0:
+            continue
+
+        normals = vtk.vtkPolyDataNormals()
+        normals.SetInputData(poly)
+        normals.ConsistencyOn()
+        normals.AutoOrientNormalsOn()
+        normals.SplittingOff()
+        normals.Update()
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(normals.GetOutputPort())
+        lut = _vtk_lookup_table(trace.get("colorscale"))
+        mapper.SetLookupTable(lut)
+        cmin = float(trace.get("cmin", 0.0))
+        cmax = float(trace.get("cmax", 1.0))
+        if not np.isfinite(cmin):
+            cmin = 0.0
+        if not np.isfinite(cmax) or cmax <= cmin:
+            cmax = cmin + 1.0
+        mapper.SetScalarRange(cmin, cmax)
+        mapper.SetScalarVisibility(
+            1 if poly.GetPointData().GetScalars() is not None else 0
+        )
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetOpacity(float(trace.get("opacity", 1.0)))
+        actor.GetProperty().SetInterpolationToPhong()
+        lighting = trace.get("lighting") or {}
+        actor.GetProperty().SetAmbient(float(lighting.get("ambient", 0.35)))
+        actor.GetProperty().SetDiffuse(float(lighting.get("diffuse", 0.65)))
+        actor.GetProperty().SetSpecular(float(lighting.get("specular", 0.25)))
+        actor.GetProperty().SetSpecularPower(
+            max(1.0, 100.0 * (1.0 - float(lighting.get("roughness", 0.5))))
+        )
+        renderer.AddActor(actor)
+        actors.append(actor)
+
+        if (
+            bool(trace.get("showscale", False))
+            and mapper.GetScalarVisibility()
+        ):
+            bar = vtk.vtkScalarBarActor()
+            bar.SetLookupTable(lut)
+            title = (trace.get("colorbar") or {}).get("title") or {}
+            if isinstance(title, dict):
+                title = title.get("text", "")
+            bar.SetTitle(str(title or trace.get("name", "")))
+            bar.SetNumberOfLabels(5)
+            text_size = max(14, int(fontsize))
+            bar.GetTitleTextProperty().SetColor(0.0, 0.0, 0.0)
+            bar.GetLabelTextProperty().SetColor(0.0, 0.0, 0.0)
+            bar.GetTitleTextProperty().SetFontSize(
+                max(18, int(text_size * 1.25))
+            )
+            bar.GetLabelTextProperty().SetFontSize(text_size)
+            bar.GetTitleTextProperty().BoldOn()
+            bar.SetMaximumWidthInPixels(max(40, width // 12))
+            bar.SetMaximumHeightInPixels(max(120, int(height * 0.65)))
+            idx = len(scalar_bars)
+            bar.SetPosition(0.86 + 0.07 * idx, 0.16)
+            bar.SetWidth(0.06)
+            bar.SetHeight(0.68)
+            renderer.AddActor2D(bar)
+            scalar_bars.append(bar)
+
+    if not actors:
+        raise RuntimeError(
+            "VTK renderer found no supported visible Mesh3d or Surface traces."
+        )
+
+    # Compute the geometry bounds before adding the cube axes.  Plotly camera
+    # ``eye`` values describe a direction in normalized scene coordinates, not
+    # an absolute distance in the data coordinate system.  We therefore keep
+    # the Plotly direction but let VTK determine a safe fitted distance.
+    bounds = renderer.ComputeVisiblePropBounds()
+    cx = 0.5 * (bounds[0] + bounds[1])
+    cy = 0.5 * (bounds[2] + bounds[3])
+    cz = 0.5 * (bounds[4] + bounds[5])
+    spans = np.array(
+        [
+            max(bounds[1] - bounds[0], 1e-12),
+            max(bounds[3] - bounds[2], 1e-12),
+            max(bounds[5] - bounds[4], 1e-12),
+        ],
+        dtype=float,
+    )
+    span = max(float(np.max(spans)), 1.0)
+
+    camera = renderer.GetActiveCamera()
+    cam = dict(scene.get("camera") or {})
+    eye = dict(cam.get("eye") or {"x": 1.5, "y": 1.5, "z": 1.5})
+    up = dict(cam.get("up") or {"x": 0.0, "y": 0.0, "z": 1.0})
+    center_rel = dict(cam.get("center") or {"x": 0.0, "y": 0.0, "z": 0.0})
+
+    focal = np.array(
+        [
+            cx + float(center_rel.get("x", 0.0)) * span,
+            cy + float(center_rel.get("y", 0.0)) * span,
+            cz + float(center_rel.get("z", 0.0)) * span,
+        ],
+        dtype=float,
+    )
+
+    eye_vec = np.array(
+        [
+            float(eye.get("x", 1.5)),
+            float(eye.get("y", 1.5)),
+            float(eye.get("z", 1.5)),
+        ],
+        dtype=float,
+    )
+    eye_norm = float(np.linalg.norm(eye_vec))
+    if not np.isfinite(eye_norm) or eye_norm < 1e-12:
+        eye_vec = np.array([1.5, 1.5, 1.5], dtype=float)
+        eye_norm = float(np.linalg.norm(eye_vec))
+    view_direction = eye_vec / eye_norm
+
+    up_vec = np.array(
+        [
+            float(up.get("x", 0.0)),
+            float(up.get("y", 0.0)),
+            float(up.get("z", 1.0)),
+        ],
+        dtype=float,
+    )
+    if not np.all(np.isfinite(up_vec)) or np.linalg.norm(up_vec) < 1e-12:
+        up_vec = np.array([0.0, 0.0, 1.0], dtype=float)
+
+    projection = dict(cam.get("projection") or {})
+    projection_type = str(projection.get("type", "perspective")).lower()
+    if projection_type == "orthographic":
+        camera.ParallelProjectionOn()
+    else:
+        camera.ParallelProjectionOff()
+        camera.SetViewAngle(30.0)
+
+    # First let VTK calculate a distance that contains the complete geometry.
+    renderer.ResetCamera(bounds)
+    fitted_position = np.asarray(camera.GetPosition(), dtype=float)
+    fitted_focal = np.asarray(camera.GetFocalPoint(), dtype=float)
+    safe_distance = float(np.linalg.norm(fitted_position - fitted_focal))
+    if not np.isfinite(safe_distance) or safe_distance <= 0.0:
+        safe_distance = 3.0 * span
+
+    camera.SetFocalPoint(*focal)
+    camera.SetPosition(*(focal + view_direction * safe_distance))
+    camera.SetViewUp(*up_vec)
+
+    # Leave a framing margin for axes, labels and camera rotations.  A value
+    # below one zooms out without changing the Plotly viewing direction.
+    camera.Zoom(0.82)
+    renderer.ResetCameraClippingRange(bounds)
+
+    # Add scene axes around the rendered data.
+    axes = vtk.vtkCubeAxesActor()
+    axes.SetBounds(bounds)
+    axes.SetCamera(camera)
+    axes.SetXTitle(
+        str(((scene.get("xaxis") or {}).get("title") or {}).get("text", "X"))
+    )
+    axes.SetYTitle(
+        str(((scene.get("yaxis") or {}).get("title") or {}).get("text", "Y"))
+    )
+    axes.SetZTitle(
+        str(((scene.get("zaxis") or {}).get("title") or {}).get("text", "Z"))
+    )
+    axes.SetFlyModeToOuterEdges()
+    axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
+    show_grid = any(
+        bool((scene.get(ax) or {}).get("showgrid", True))
+        for ax in ("xaxis", "yaxis", "zaxis")
+    )
+    axes.SetDrawXGridlines(show_grid)
+    axes.SetDrawYGridlines(show_grid)
+    axes.SetDrawZGridlines(show_grid)
+
+    # Presentation-friendly axes: black and large enough for exported frames.
+    axis_color = (0.0, 0.0, 0.0)
+    axis_fontsize = max(18, int(fontsize))
+
+    # vtkCubeAxesActor scales 3D text automatically. SetScreenSize is the
+    # effective control for visible text size in VTK 9.3.x.
+    if hasattr(axes, "SetScreenSize"):
+        axes.SetScreenSize(max(28.0, float(axis_fontsize) * 2.2))
+
+    # Prefer 2D text actors when supported so explicit font sizes are respected.
+    if hasattr(axes, "SetUseTextActor3D"):
+        axes.SetUseTextActor3D(False)
+
+    for axis_index in range(3):
+        title_prop = axes.GetTitleTextProperty(axis_index)
+        label_prop = axes.GetLabelTextProperty(axis_index)
+
+        title_prop.SetColor(*axis_color)
+        label_prop.SetColor(*axis_color)
+        title_prop.SetFontSize(max(24, int(axis_fontsize * 1.45)))
+        label_prop.SetFontSize(max(20, axis_fontsize))
+        title_prop.BoldOn()
+        label_prop.BoldOn()
+
+    axis_line_props = (
+        axes.GetXAxesLinesProperty(),
+        axes.GetYAxesLinesProperty(),
+        axes.GetZAxesLinesProperty(),
+    )
+    for prop in axis_line_props:
+        prop.SetColor(*axis_color)
+        prop.SetOpacity(1.0)
+        prop.SetLineWidth(2.0)
+
+    grid_props = (
+        axes.GetXAxesGridlinesProperty(),
+        axes.GetYAxesGridlinesProperty(),
+        axes.GetZAxesGridlinesProperty(),
+    )
+    for prop in grid_props:
+        prop.SetColor(*axis_color)
+        prop.SetOpacity(0.35)
+        prop.SetLineWidth(1.0)
+
+    # Some VTK builds expose separate inner-grid properties.
+    for getter_name in (
+        "GetXAxesInnerGridlinesProperty",
+        "GetYAxesInnerGridlinesProperty",
+        "GetZAxesInnerGridlinesProperty",
+    ):
+        getter = getattr(axes, getter_name, None)
+        if getter is not None:
+            prop = getter()
+            prop.SetColor(*axis_color)
+            prop.SetOpacity(0.25)
+
+    renderer.AddActor(axes)
+
+    # Recompute clipping after the final camera and axes setup.
+    renderer.ResetCameraClippingRange(bounds)
+    window.Render()
+    capture = vtk.vtkWindowToImageFilter()
+    capture.SetInput(window)
+    capture.SetInputBufferTypeToRGBA()
+    capture.ReadFrontBufferOff()
+    capture.Update()
+
+    writer = vtk.vtkPNGWriter()
+    writer.SetWriteToMemory(True)
+    writer.SetInputConnection(capture.GetOutputPort())
+    writer.Write()
+    result = bytes(memoryview(writer.GetResult()))
+    window.Finalize()
+    return result
+
+
+def _render_fig_json_to_png_backend(
+    fig_json: dict,
+    w: int,
+    h: int,
+    s: int,
+    backend: str = "kaleido",
+    fontsize: int = 18,
+) -> bytes:
+    backend = str(backend or "kaleido").lower().strip()
+    if backend == "vtk":
+        return _render_fig_json_to_png_vtk(
+            fig_json, w, h, s, fontsize=fontsize
+        )
+    if backend != "kaleido":
+        raise ValueError(f"Unknown rendering backend: {backend!r}")
     fig = go.Figure(fig_json)
     return pio.to_image(
         fig, format="png", width=int(w), height=int(h), scale=int(s)
+    )
+
+
+def _render_fig_json_to_png(fig_json: dict, w: int, h: int, s: int) -> bytes:
+    """Backward-compatible Kaleido worker."""
+    return _render_fig_json_to_png_backend(fig_json, w, h, s, "kaleido")
+
+
+def _test_vtk_backend() -> tuple[bool, str]:
+    """Return whether VTK can create an offscreen PNG in this environment."""
+    try:
+        ensure_x_display()
+        import vtk  # noqa: F401
+
+        test_fig = {
+            "data": [
+                {
+                    "type": "mesh3d",
+                    "x": [0.0, 1.0, 0.0],
+                    "y": [0.0, 0.0, 1.0],
+                    "z": [0.0, 0.0, 0.0],
+                    "i": [0],
+                    "j": [1],
+                    "k": [2],
+                    "intensity": [0.0, 0.5, 1.0],
+                    "showscale": False,
+                }
+            ],
+            "layout": {"scene": {}},
+        }
+        png = _render_fig_json_to_png_vtk(test_fig, 160, 120, 1, fontsize=14)
+        if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+            return False, "VTK did not return a valid PNG."
+        return True, "VTK is available."
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _test_kaleido_backend(timeout: int = 25) -> tuple[bool, str]:
+    """Test Kaleido in a child process so a broken Chrome launch cannot hang the kernel."""
+    code = (
+        "import plotly.graph_objects as go\n"
+        "import plotly.io as pio\n"
+        "fig = go.Figure(go.Scatter(x=[0, 1], y=[0, 1]))\n"
+        "data = pio.to_image(fig, format='png', width=160, height=120, scale=1)\n"
+        "assert data.startswith(b'\\x89PNG\\r\\n\\x1a\\n')\n"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=max(5, int(timeout)),
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            False,
+            f"Kaleido test timed out after {timeout} seconds (Chrome may be unavailable).",
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if proc.returncode == 0:
+        return True, "Kaleido is available."
+    detail = (proc.stderr or proc.stdout or "unknown Kaleido error").strip()
+    return False, detail[-1200:]
+
+
+def _select_rendering_backend(requested: str) -> tuple[str, dict[str, str]]:
+    """Validate the requested backend and fall back to the other backend if needed."""
+    requested = str(requested or "auto").lower().strip()
+    if requested not in {"auto", "kaleido", "vtk"}:
+        raise ValueError(
+            "rendering_backend must be one of ['auto', 'kaleido', 'vtk']; "
+            f"got {requested!r}"
+        )
+
+    if requested == "auto":
+        order = ["kaleido", "vtk"]
+    else:
+        order = [requested, "vtk" if requested == "kaleido" else "kaleido"]
+
+    diagnostics: dict[str, str] = {}
+    for index, backend in enumerate(order):
+        if backend == "kaleido":
+            ok, message = _test_kaleido_backend()
+        else:
+            ok, message = _test_vtk_backend()
+        diagnostics[backend] = message
+
+        if ok:
+            if index > 0:
+                warnings.warn(
+                    f"Requested rendering backend {requested!r} is unavailable: "
+                    f"{diagnostics[order[0]]} Switching to {backend!r}.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+            return backend, diagnostics
+
+    raise RuntimeError(
+        "No usable rendering backend was found. "
+        f"Kaleido: {diagnostics.get('kaleido', 'not tested')} | "
+        f"VTK: {diagnostics.get('vtk', 'not tested')}"
     )
 
 
@@ -255,6 +904,7 @@ class MultiVolumeViewer(widgets.Box):
         render_workers: int | None = None,
         render_in_flight: int | None = None,
         rendering_mode: Literal["safe", "fast", "process"] = "safe",
+        rendering_backend: Literal["auto", "kaleido", "vtk"] = "auto",
         export_width: int | None = None,
         export_height: int | None = None,
     ):
@@ -275,12 +925,28 @@ class MultiVolumeViewer(widgets.Box):
         )
 
         mode = str(rendering_mode or "safe").lower().strip()
-        allowed = {"safe", "fast", "process"}
-        if mode not in allowed:
-            raise ValueError(
-                f"rendering_mode must be one of {sorted(allowed)}; got {rendering_mode!r}"
+
+        # Backward compatibility with the temporary API where vtk/auto were modes.
+        if mode in {"vtk", "auto"}:
+            warnings.warn(
+                "Use rendering_backend='vtk' or rendering_backend='auto'. "
+                "rendering_mode now controls only concurrency: safe/fast/process.",
+                DeprecationWarning,
+                stacklevel=2,
             )
+            rendering_backend = mode
+            mode = "safe"
+
+        allowed_modes = {"safe", "fast", "process"}
+        if mode not in allowed_modes:
+            raise ValueError(
+                f"rendering_mode must be one of {sorted(allowed_modes)}; got {rendering_mode!r}"
+            )
+
         self.rendering_mode = mode
+        self.rendering_backend, self.rendering_backend_diagnostics = (
+            _select_rendering_backend(rendering_backend)
+        )
         self._export_proc_pool = None
 
         self._suspend_rename_autofill_once = False
@@ -2837,6 +3503,31 @@ class MultiVolumeViewer(widgets.Box):
         spec = {"action": "animate_rotation", **spec}
         self.run_actions([spec])
         return await self.wait_for_export()
+
+    def write_image(
+        self,
+        out_path,
+        *,
+        width=None,
+        height=None,
+        scale=1,
+    ):
+        """Export the current figure using the selected rendering backend."""
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        width = int(width or self.export_width)
+        height = int(height or self.export_height)
+        scale = int(scale)
+
+        png_bytes = self._to_png(
+            self.fig,
+            width,
+            height,
+            scale,
+        )
+
+        out_path.write_bytes(png_bytes)
 
     # =========================
     # Create layer callback
@@ -5543,7 +6234,7 @@ class MultiVolumeViewer(widgets.Box):
         return None
 
     # ------------------------------------------------------------------------------------
-    # animation general
+    # Animation helpers
     # ------------------------------------------------------------------------------------
     @staticmethod
     def _png_bytes_list_to_gif_ffmpeg_palette(
@@ -5834,7 +6525,7 @@ class MultiVolumeViewer(widgets.Box):
         return v * ct + np.cross(k, v) * st + k * (np.dot(k, v)) * (1 - ct)
 
     # ============================================================
-    # Animation export — Export core
+    # Animation export — core rendering
     # ============================================================
     @staticmethod
     def _require_ffmpeg():
@@ -6032,11 +6723,13 @@ class MultiVolumeViewer(widgets.Box):
                         return idx, None
                     png = await loop.run_in_executor(
                         render_pool,
-                        _render_fig_json_to_png,  # must be module-level
+                        _render_fig_json_to_png_backend,
                         fig_json,
                         int(width),
                         int(height),
                         int(scale),
+                        self.rendering_backend,
+                        self.fontsize,
                     )
                     return idx, png
 
@@ -6208,14 +6901,24 @@ class MultiVolumeViewer(widgets.Box):
             raise
         finally:
             gif_err = None
+            active_error = sys.exc_info()[0] is not None
             try:
-                if fmt == "gif" and gif_enabled:
-                    # IMPORTANT: run ffmpeg work off the UI thread
+                if fmt == "gif" and gif_enabled and gif_png_frames:
+                    # Encode only frames that were rendered successfully.
                     await asyncio.to_thread(
                         self._png_bytes_list_to_gif_ffmpeg_palette,
                         gif_png_frames,
                         out_path,
                         int(fps),
+                    )
+                elif (
+                    fmt == "gif"
+                    and gif_enabled
+                    and not active_error
+                    and not self._anim_cancel
+                ):
+                    raise RuntimeError(
+                        "No frames were rendered for GIF export."
                     )
                 elif writer is not None:
                     # writer.close() can also block; keep it off-thread too
@@ -6241,7 +6944,7 @@ class MultiVolumeViewer(widgets.Box):
                 raise gif_err
 
     # ============================================================
-    # Animation export — Export settings / control
+    # Animation export — settings and control
     # ============================================================
     def _reset_view_and_fit(self, reset_camera: bool = True):
         cam = getattr(self, "_initial_camera", None)
@@ -6352,6 +7055,19 @@ class MultiVolumeViewer(widgets.Box):
     # ============================================================
     def _to_png(self, fig, width: int, height: int, scale: int) -> bytes:
         mode = getattr(self, "rendering_mode", "safe")
+
+        backend = getattr(self, "rendering_backend", "kaleido")
+        if backend == "vtk":
+            fig_json = (
+                fig.to_plotly_json() if hasattr(fig, "to_plotly_json") else fig
+            )
+            return _render_fig_json_to_png_vtk(
+                fig_json,
+                int(width),
+                int(height),
+                int(scale),
+                fontsize=self.fontsize,
+            )
 
         if mode == "fast":
             # true parallelism in threads: each thread uses its own scope
@@ -6814,11 +7530,13 @@ class MultiVolumeViewer(widgets.Box):
                     if use_process:
                         png = await loop.run_in_executor(
                             render_pool,
-                            _render_fig_json_to_png,
+                            _render_fig_json_to_png_backend,
                             fig_json,
                             int(width),
                             int(height),
                             int(scale),
+                            self.rendering_backend,
+                            self.fontsize,
                         )
                     else:
                         # safe fallback: serialize with lock in main process
@@ -7002,14 +7720,24 @@ class MultiVolumeViewer(widgets.Box):
 
         finally:
             gif_err = None
+            active_error = sys.exc_info()[0] is not None
             try:
-                if fmt == "gif" and gif_enabled:
-                    # IMPORTANT: run ffmpeg work off the UI thread
+                if fmt == "gif" and gif_enabled and gif_png_frames:
+                    # Encode only frames that were rendered successfully.
                     await asyncio.to_thread(
                         self._png_bytes_list_to_gif_ffmpeg_palette,
                         gif_png_frames,
                         out_path,
                         int(fps),
+                    )
+                elif (
+                    fmt == "gif"
+                    and gif_enabled
+                    and not active_error
+                    and not self._anim_cancel
+                ):
+                    raise RuntimeError(
+                        "No frames were rendered for GIF export."
                     )
                 elif writer is not None:
                     # writer.close() can also block; keep it off-thread too
