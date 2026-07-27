@@ -233,7 +233,11 @@ class XFELLoader(H5TypeLoader):
 
         data = np.asarray(images)
         data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
-
+        data = np.where(
+            data > 0,
+            data,
+            0
+        )
         roi = self._check_roi(roi)
         data = data[roi]
 
