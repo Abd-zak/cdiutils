@@ -417,6 +417,298 @@ def _vtk_polydata_from_surface(trace):
     return poly, "point"
 
 
+def _scene_bounds_from_layout(scene):
+    """Return fixed XYZ bounds from Plotly axis ranges, if available."""
+    ranges = []
+
+    for axis_name in ("xaxis", "yaxis", "zaxis"):
+        axis = dict(scene.get(axis_name) or {})
+        axis_range = axis.get("range")
+
+        if axis_range is None or len(axis_range) != 2:
+            return None
+
+        lo = float(axis_range[0])
+        hi = float(axis_range[1])
+
+        if not np.isfinite(lo) or not np.isfinite(hi):
+            return None
+
+        if hi < lo:
+            lo, hi = hi, lo
+
+        ranges.extend([lo, hi])
+
+    return tuple(ranges)
+
+
+def _metric_unit_power(unit):
+    """Return the SI power associated with a metric length unit."""
+    units = {
+        "pm": -12,
+        "nm": -9,
+        "um": -6,
+        "µm": -6,
+        "μm": -6,
+        "mm": -3,
+        "m": 0,
+        "km": 3,
+    }
+
+    if unit is None:
+        return None
+
+    return units.get(str(unit).strip())
+
+
+def _metric_unit_from_power(power):
+    """Return a VTK-safe metric length unit."""
+    units = {
+        -12: "pm",
+        -9: "nm",
+        -6: "um",
+        -3: "mm",
+        0: "m",
+        3: "km",
+    }
+
+    return units.get(int(power))
+
+
+def _extract_axis_unit(title):
+    """
+    Extract the unit from an axis title such as:
+    'X (nm)' or 'X (µm)'.
+    """
+    text = str(title or "")
+
+    if "(" not in text or ")" not in text:
+        return None
+
+    return text.rsplit("(", 1)[1].split(")", 1)[0].strip()
+
+
+def _vtk_safe_text(text):
+    """
+    Convert text to characters reliably supported by VTK's built-in fonts.
+    """
+    return (
+        str(text or "")
+        .replace("µ", "u")
+        .replace("μ", "u")
+        .replace("×", "x")
+        .replace("−", "-")
+        .replace("<sup>", "^")
+        .replace("</sup>", "")
+    )
+
+
+def _prepare_fig_json_for_vtk(fig_json):
+    """
+    Prepare Plotly JSON for VTK rendering.
+
+    The live Plotly figure remains unchanged. For VTK only, coordinates are
+    automatically converted to a readable engineering unit.
+
+    Examples
+    --------
+    200 nm  -> remains in nm
+    1200 nm -> converted to 1.2 um
+    """
+    import copy
+
+    vtk_json = copy.deepcopy(fig_json)
+
+    layout = dict(vtk_json.get("layout") or {})
+    scene = dict(layout.get("scene") or {})
+
+    # ------------------------------------------------------------
+    # Find the largest visible coordinate span
+    # ------------------------------------------------------------
+    axis_min = {
+        "x": np.inf,
+        "y": np.inf,
+        "z": np.inf,
+    }
+
+    axis_max = {
+        "x": -np.inf,
+        "y": -np.inf,
+        "z": -np.inf,
+    }
+
+    for trace in vtk_json.get("data", []):
+        opacity = float(trace.get("opacity", 1.0))
+
+        if opacity <= 1e-6:
+            continue
+
+        trace_type = str(trace.get("type", "")).lower()
+
+        if trace_type not in {"mesh3d", "surface"}:
+            continue
+
+        for key in ("x", "y", "z"):
+            values = trace.get(key)
+
+            if values is None:
+                continue
+
+            array = _decode_plotly_array(
+                values,
+                dtype=float,
+            )
+
+            finite = array[np.isfinite(array)]
+
+            if not finite.size:
+                continue
+
+            axis_min[key] = min(
+                axis_min[key],
+                float(np.min(finite)),
+            )
+
+            axis_max[key] = max(
+                axis_max[key],
+                float(np.max(finite)),
+            )
+
+    spans = [
+        axis_max[key] - axis_min[key]
+        for key in ("x", "y", "z")
+        if np.isfinite(axis_min[key]) and np.isfinite(axis_max[key])
+    ]
+
+    if not spans:
+        return vtk_json
+
+    characteristic_value = max(spans)
+
+    if characteristic_value <= 0.0:
+        return vtk_json
+
+    # ------------------------------------------------------------
+    # Read current unit from the Plotly axis title
+    # ------------------------------------------------------------
+    xaxis = dict(scene.get("xaxis") or {})
+    x_title = xaxis.get("title") or {}
+
+    if isinstance(x_title, dict):
+        x_title = x_title.get("text", "")
+    else:
+        x_title = str(x_title)
+
+    current_unit = _extract_axis_unit(x_title)
+    current_power = _metric_unit_power(current_unit)
+
+    if current_power is None:
+        return vtk_json
+
+    # ------------------------------------------------------------
+    # Choose automatic engineering conversion
+    #
+    # Keep values roughly between 1 and 999 when possible.
+    # ------------------------------------------------------------
+    engineering_shift = int(np.floor(np.log10(characteristic_value) / 3.0) * 3)
+
+    # Do not change the unit for values below 1000 in the current unit.
+    if engineering_shift < 3:
+        engineering_shift = 0
+
+    new_power = current_power + engineering_shift
+    new_unit = _metric_unit_from_power(new_power)
+
+    if new_unit is None:
+        engineering_shift = 0
+        new_unit = current_unit
+
+    coordinate_scale = 10.0 ** (-engineering_shift)
+
+    # ------------------------------------------------------------
+    # Scale VTK geometry only
+    # ------------------------------------------------------------
+    if coordinate_scale != 1.0:
+        for trace in vtk_json.get("data", []):
+            opacity = float(trace.get("opacity", 1.0))
+
+            if opacity <= 1e-6:
+                continue
+
+            trace_type = str(trace.get("type", "")).lower()
+
+            if trace_type not in {"mesh3d", "surface"}:
+                continue
+
+            for key in ("x", "y", "z"):
+                values = trace.get(key)
+
+                if values is None:
+                    continue
+
+                array = _decode_plotly_array(
+                    values,
+                    dtype=float,
+                )
+
+                trace[key] = (array * coordinate_scale).tolist()
+
+    # ------------------------------------------------------------
+    # Scale explicit axis ranges
+    # ------------------------------------------------------------
+    for axis_name in ("xaxis", "yaxis", "zaxis"):
+        axis = dict(scene.get(axis_name) or {})
+        axis_range = axis.get("range")
+
+        if (
+            coordinate_scale != 1.0
+            and axis_range is not None
+            and len(axis_range) == 2
+        ):
+            axis["range"] = [
+                float(axis_range[0]) * coordinate_scale,
+                float(axis_range[1]) * coordinate_scale,
+            ]
+
+        axis_letter = {
+            "xaxis": "X",
+            "yaxis": "Y",
+            "zaxis": "Z",
+        }[axis_name]
+
+        axis["title"] = {"text": f"{axis_letter} ({new_unit})"}
+
+        # These are useful for Plotly but harmless for VTK.
+        axis["showexponent"] = "none"
+        axis["exponentformat"] = "none"
+
+        scene[axis_name] = axis
+
+    layout["scene"] = scene
+    vtk_json["layout"] = layout
+
+    print("--------------------------------")
+    print("Characteristic value:", characteristic_value)
+    print("Current unit:", current_unit)
+    print("Engineering shift:", engineering_shift)
+    print("Coordinate scale:", coordinate_scale)
+    print("New unit:", new_unit)
+    print("--------------------------------")
+
+    return vtk_json
+
+
+def _scene_axis_title(scene, axis_name, fallback):
+    """Extract an axis title safely from a Plotly scene dictionary."""
+    axis = dict(scene.get(axis_name) or {})
+    title = axis.get("title", fallback)
+
+    if isinstance(title, dict):
+        title = title.get("text", fallback)
+
+    return _vtk_safe_text(title)
+
+
 def _render_fig_json_to_png_vtk(
     fig_json: dict, w: int, h: int, s: int, fontsize: int = 18
 ) -> bytes:
@@ -452,6 +744,11 @@ def _render_fig_json_to_png_vtk(
     scalar_bars = []
     actors = []
     for trace in fig_json.get("data", []):
+        opacity = float(trace.get("opacity", 1.0))
+
+        # Fully transparent layers must not affect the VTK bounds or camera.
+        if opacity <= 1e-6:
+            continue
         t = str(trace.get("type", "")).lower()
         if t == "mesh3d":
             poly, _ = _vtk_polydata_from_mesh3d(trace)
@@ -486,7 +783,7 @@ def _render_fig_json_to_png_vtk(
 
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
-        actor.GetProperty().SetOpacity(float(trace.get("opacity", 1.0)))
+        actor.GetProperty().SetOpacity(opacity)
         actor.GetProperty().SetInterpolationToPhong()
         lighting = trace.get("lighting") or {}
         actor.GetProperty().SetAmbient(float(lighting.get("ambient", 0.35)))
@@ -509,18 +806,39 @@ def _render_fig_json_to_png_vtk(
                 title = title.get("text", "")
             bar.SetTitle(str(title or trace.get("name", "")))
             bar.SetNumberOfLabels(5)
-            text_size = max(14, int(fontsize))
-            bar.GetTitleTextProperty().SetColor(0.0, 0.0, 0.0)
-            bar.GetLabelTextProperty().SetColor(0.0, 0.0, 0.0)
-            bar.GetTitleTextProperty().SetFontSize(
-                max(18, int(text_size * 1.25))
-            )
-            bar.GetLabelTextProperty().SetFontSize(text_size)
-            bar.GetTitleTextProperty().BoldOn()
+
+            text_size = max(18, int(fontsize))
+
+            title_prop = bar.GetTitleTextProperty()
+            label_prop = bar.GetLabelTextProperty()
+
+            title_prop.SetFontFamilyToArial()
+            label_prop.SetFontFamilyToArial()
+
+            title_prop.SetColor(0.0, 0.0, 0.0)
+            label_prop.SetColor(0.0, 0.0, 0.0)
+
+            title_prop.SetFontSize(max(40, int(text_size * 4)))
+            label_prop.SetFontSize(max(40, int(text_size * 4)))
+
+            title_prop.BoldOn()
+            label_prop.BoldOn()
+
+            # Important: prevent vtkScalarBarActor from shrinking the font
+            if hasattr(bar, "SetUnconstrainedFontSize"):
+                bar.SetUnconstrainedFontSize(True)
+
+            # Reserve more vertical room for the title.
+            if hasattr(bar, "SetTitleRatio"):
+                bar.SetTitleRatio(0.16)
+
             bar.SetMaximumWidthInPixels(max(40, width // 12))
             bar.SetMaximumHeightInPixels(max(120, int(height * 0.65)))
             idx = len(scalar_bars)
-            bar.SetPosition(0.86 + 0.07 * idx, 0.16)
+            bar.SetPosition(
+                0.86 + 0.07 * idx,
+                0.1,
+            )
             bar.SetWidth(0.06)
             bar.SetHeight(0.68)
             renderer.AddActor2D(bar)
@@ -535,7 +853,12 @@ def _render_fig_json_to_png_vtk(
     # ``eye`` values describe a direction in normalized scene coordinates, not
     # an absolute distance in the data coordinate system.  We therefore keep
     # the Plotly direction but let VTK determine a safe fitted distance.
-    bounds = renderer.ComputeVisiblePropBounds()
+    fixed_bounds = _scene_bounds_from_layout(scene)
+
+    if fixed_bounds is not None:
+        bounds = fixed_bounds
+    else:
+        bounds = renderer.ComputeVisiblePropBounds()
     cx = 0.5 * (bounds[0] + bounds[1])
     cy = 0.5 * (bounds[2] + bounds[3])
     cz = 0.5 * (bounds[4] + bounds[5])
@@ -618,15 +941,40 @@ def _render_fig_json_to_png_vtk(
     axes = vtk.vtkCubeAxesActor()
     axes.SetBounds(bounds)
     axes.SetCamera(camera)
-    axes.SetXTitle(
-        str(((scene.get("xaxis") or {}).get("title") or {}).get("text", "X"))
+    # Keep the axes readable in publication-size exports.
+    if hasattr(axes, "SetNumberOfLabels"):
+        axes.SetNumberOfLabels(5)
+    axes.SetXTitle(_scene_axis_title(scene, "xaxis", "X"))
+    axes.SetYTitle(_scene_axis_title(scene, "yaxis", "Y"))
+    axes.SetZTitle(_scene_axis_title(scene, "zaxis", "Z"))
+    # Separate tick labels and titles from the axis lines.
+    if hasattr(axes, "SetLabelOffset"):
+        axes.SetLabelOffset(8.0)
+
+    if hasattr(axes, "SetTitleOffset"):
+        axes.SetTitleOffset(18.0)
+
+    max_span = max(
+        bounds[1] - bounds[0],
+        bounds[3] - bounds[2],
+        bounds[5] - bounds[4],
     )
-    axes.SetYTitle(
-        str(((scene.get("yaxis") or {}).get("title") or {}).get("text", "Y"))
-    )
-    axes.SetZTitle(
-        str(((scene.get("zaxis") or {}).get("title") or {}).get("text", "Z"))
-    )
+
+    if max_span < 0.1:
+        decimals = 3
+    elif max_span < 1.0:
+        decimals = 2
+    elif max_span < 10.0:
+        decimals = 1
+    else:
+        decimals = 0
+
+    label_format = f"%.{decimals}f"
+
+    axes.SetXLabelFormat(label_format)
+    axes.SetYLabelFormat(label_format)
+    axes.SetZLabelFormat(label_format)
+
     axes.SetFlyModeToOuterEdges()
     axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
     show_grid = any(
@@ -644,7 +992,7 @@ def _render_fig_json_to_png_vtk(
     # vtkCubeAxesActor scales 3D text automatically. SetScreenSize is the
     # effective control for visible text size in VTK 9.3.x.
     if hasattr(axes, "SetScreenSize"):
-        axes.SetScreenSize(max(28.0, float(axis_fontsize) * 2.2))
+        axes.SetScreenSize(max(40, float(axis_fontsize) * 4.0))
 
     # Prefer 2D text actors when supported so explicit font sizes are respected.
     if hasattr(axes, "SetUseTextActor3D"):
@@ -654,10 +1002,18 @@ def _render_fig_json_to_png_vtk(
         title_prop = axes.GetTitleTextProperty(axis_index)
         label_prop = axes.GetLabelTextProperty(axis_index)
 
+        title_prop.SetFontFamilyToArial()
+        label_prop.SetFontFamilyToArial()
+
         title_prop.SetColor(*axis_color)
         label_prop.SetColor(*axis_color)
-        title_prop.SetFontSize(max(24, int(axis_fontsize * 1.45)))
-        label_prop.SetFontSize(max(20, axis_fontsize))
+
+        title_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
+        label_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
+
+        # Rotate tick-value text
+        label_prop.SetOrientation(45.0)
+
         title_prop.BoldOn()
         label_prop.BoldOn()
 
@@ -1197,33 +1553,33 @@ class MultiVolumeViewer(widgets.Box):
     # Figure / layout construction
     # =========================
     def _build_figure(self, figsize):
-        axis_common = dict(
-            title=dict(font=self._bold_font(self.fontsize * 1.5)),
-            tickfont=self._bold_font(self.fontsize),
-            showline=True,
-            linewidth=3,
-            linecolor=self._axis_line_color(),
-            showgrid=bool(getattr(self, "grid_toggle", None).value)
-            if hasattr(self, "grid_toggle")
-            else True,
-            gridwidth=2,
-            gridcolor=self._axis_grid_color(),
-            zeroline=False,
-        )
+        axis_common = self._axis_layout()
+
         self.fig = go.FigureWidget()
+
         self.fig.update_layout(
             template="plotly_white",
-            scene=dict(
-                xaxis=axis_common | dict(title_text=self._axis_label("X")),
-                yaxis=axis_common | dict(title_text=self._axis_label("Y")),
-                zaxis=axis_common | dict(title_text=self._axis_label("Z")),
-            ),
+            scene={
+                "xaxis": axis_common
+                | {
+                    "title_text": self._axis_label("X"),
+                },
+                "yaxis": axis_common
+                | {
+                    "title_text": self._axis_label("Y"),
+                },
+                "zaxis": axis_common
+                | {
+                    "title_text": self._axis_label("Z"),
+                },
+            },
             autosize=True,
             height=int(figsize[1] * 90),
             dragmode="orbit",
-            margin=dict(l=0, r=0, t=0, b=0),
+            margin={"l": 0, "r": 0, "t": 0, "b": 0},
             font=self._bold_font(),
         )
+
         self.fig.layout.width = None
 
     def _compose_layout(self, figsize):
@@ -3504,15 +3860,35 @@ class MultiVolumeViewer(widgets.Box):
         self.run_actions([spec])
         return await self.wait_for_export()
 
+    def _axis_layout(self):
+        return {
+            "title": {
+                "font": self._bold_font(self.fontsize * 1.5),
+            },
+            "tickfont": self._bold_font(self.fontsize),
+            "showline": True,
+            "linewidth": 3,
+            "linecolor": self._axis_line_color(),
+            "showgrid": bool(self.grid_toggle.value),
+            "gridwidth": 2,
+            "gridcolor": self._axis_grid_color(),
+            "zeroline": False,
+            "ticklen": 18,
+            "tickwidth": 2,
+            "nticks": 4,
+            # Scientific notation displayed as ×10³
+            "showexponent": "all",
+            "exponentformat": "power",
+        }
+
     def write_image(
         self,
         out_path,
-        *,
         width=None,
         height=None,
         scale=1,
+        rendering_backend=None,
     ):
-        """Export the current figure using the selected rendering backend."""
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -3520,14 +3896,50 @@ class MultiVolumeViewer(widgets.Box):
         height = int(height or self.export_height)
         scale = int(scale)
 
-        png_bytes = self._to_png(
-            self.fig,
-            width,
-            height,
-            scale,
+        backend = (
+            str(rendering_backend or self.rendering_backend).lower().strip()
         )
 
+        # Ensure the figure reflects the latest layer settings,
+        # visibility, translations, rotations and slices.
+        self._update_all_traces()
+
+        fig_json = self.fig.to_plotly_json()
+
+        if backend == "vtk":
+            vtk_fig_json = _prepare_fig_json_for_vtk(fig_json)
+
+            png_bytes = _render_fig_json_to_png_vtk(
+                vtk_fig_json,
+                width,
+                height,
+                scale,
+                fontsize=self.fontsize,
+            )
+
+        elif backend in {"plotly", "kaleido"}:
+            png_bytes = self._to_png(
+                self.fig,
+                width=width,
+                height=height,
+                scale=scale,
+            )
+
+        else:
+            raise ValueError(
+                f"Unsupported rendering backend: {backend!r}. "
+                "Expected 'vtk', 'plotly', or 'kaleido'."
+            )
+
+        if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError(
+                f"The {backend!r} renderer did not return valid PNG data."
+            )
+
         out_path.write_bytes(png_bytes)
+        print(f"[INFO] Image saved with {backend}: {out_path}")
+
+        return out_path
 
     # =========================
     # Create layer callback
@@ -4258,20 +4670,43 @@ class MultiVolumeViewer(widgets.Box):
             valid_values = {v for (_lbl, v) in base_opts}
             dd.value = old_val if old_val in valid_values else "__self__"
 
-    def _on_layer_transform_changed(self, change, layer_name: str):
+    def _on_layer_transform_changed(self, change):
+        owner = change.get("owner")
+
+        layer_name = next(
+            (
+                name
+                for name, widgets_dict in self._layer_widgets.items()
+                if owner
+                in (
+                    widgets_dict.get("rot_x"),
+                    widgets_dict.get("rot_y"),
+                    widgets_dict.get("rot_z"),
+                    widgets_dict.get("trans_x"),
+                    widgets_dict.get("trans_y"),
+                    widgets_dict.get("trans_z"),
+                )
+            ),
+            None,
+        )
+
+        if layer_name is None:
+            return
+
+        self._ensure_layer_transform(layer_name)
+
         wdg = self._layer_widgets[layer_name]
         self._layer_transform[layer_name]["rot_deg"] = [
-            wdg["rot_x"].value,
-            wdg["rot_y"].value,
-            wdg["rot_z"].value,
+            float(wdg["rot_x"].value),
+            float(wdg["rot_y"].value),
+            float(wdg["rot_z"].value),
         ]
         self._layer_transform[layer_name]["trans"] = [
-            wdg["trans_x"].value,
-            wdg["trans_y"].value,
-            wdg["trans_z"].value,
+            float(wdg["trans_x"].value),
+            float(wdg["trans_y"].value),
+            float(wdg["trans_z"].value),
         ]
 
-        # keep your existing refresh path
         self._on_layer_param_changed(change)
 
     def _load_transform_state_into_widgets(self, layer_name: str):
@@ -4616,8 +5051,9 @@ class MultiVolumeViewer(widgets.Box):
         dz = nz * vz
 
         txmin, txmax = -2 * dx, 2 * dx
-        tymin, tymax = -2 * dy, 2 * dx
-        tzmin, tzmax = -2 * dz, 2 * dx
+        tymin, tymax = -2 * dy, 2 * dy
+        tzmin, tzmax = -2 * dz, 2 * dz
+
         trans_x = widgets.FloatSlider(
             description="Tx",
             min=txmin,
@@ -4649,10 +5085,7 @@ class MultiVolumeViewer(widgets.Box):
             layout=widgets.Layout(width="95%"),
         )
         for wdg in (rot_x, rot_y, rot_z, trans_x, trans_y, trans_z):
-            wdg.observe(
-                lambda ch, kk=k: self._on_layer_transform_changed(ch, kk),
-                names="value",
-            )
+            wdg.observe(self._on_layer_transform_changed, names="value")
         transform_box = widgets.VBox(
             [rot_x, rot_y, rot_z, trans_x, trans_y, trans_z]
         )
