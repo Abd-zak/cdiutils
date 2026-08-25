@@ -657,10 +657,7 @@ def _prepare_fig_json_for_vtk(fig_json):
         for annotation in annotations:
             for key in ("x", "y", "z"):
                 if annotation.get(key) is not None:
-                    annotation[key] = (
-                        float(annotation[key])
-                        * coordinate_scale
-                    )
+                    annotation[key] = float(annotation[key]) * coordinate_scale
 
         scene["annotations"] = annotations
     # ------------------------------------------------------------
@@ -718,6 +715,7 @@ def _scene_axis_title(scene, axis_name, fallback):
 
     return _vtk_safe_text(title)
 
+
 def _strip_plotly_html(text):
     return (
         str(text or "")
@@ -749,27 +747,19 @@ def _add_vtk_scene_annotations(
         except (TypeError, ValueError):
             continue
 
-        text = _strip_plotly_html(
-            annotation.get("text", "")
-        )
+        text = _strip_plotly_html(annotation.get("text", ""))
 
         if not text:
             continue
 
         font = dict(annotation.get("font") or {})
 
-        color = _parse_plotly_color(
-            font.get("color", "black")
-        )
+        color = _parse_plotly_color(font.get("color", "black"))
 
-        font_size = float(
-            font.get("size", 18)
-        )
+        font_size = float(font.get("size", 18))
 
         actor = vtk.vtkBillboardTextActor3D()
-        actor.SetInput(
-            _vtk_safe_text(text)
-        )
+        actor.SetInput(_vtk_safe_text(text))
         actor.SetPosition(
             x,
             y,
@@ -794,6 +784,7 @@ def _add_vtk_scene_annotations(
         text_property.SetVerticalJustificationToCentered()
 
         renderer.AddActor(actor)
+
 
 def _render_fig_json_to_png_vtk(
     fig_json: dict, w: int, h: int, s: int, fontsize: int = 18
