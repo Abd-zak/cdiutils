@@ -652,7 +652,17 @@ def _prepare_fig_json_for_vtk(fig_json):
                 )
 
                 trace[key] = (array * coordinate_scale).tolist()
+        annotations = list(scene.get("annotations") or [])
 
+        for annotation in annotations:
+            for key in ("x", "y", "z"):
+                if annotation.get(key) is not None:
+                    annotation[key] = (
+                        float(annotation[key])
+                        * coordinate_scale
+                    )
+
+        scene["annotations"] = annotations
     # ------------------------------------------------------------
     # Scale explicit axis ranges
     # ------------------------------------------------------------
@@ -708,6 +718,82 @@ def _scene_axis_title(scene, axis_name, fallback):
 
     return _vtk_safe_text(title)
 
+def _strip_plotly_html(text):
+    return (
+        str(text or "")
+        .replace("<b>", "")
+        .replace("</b>", "")
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+    )
+
+
+def _add_vtk_scene_annotations(
+    renderer,
+    scene,
+    scale=1,
+):
+    import vtk
+
+    annotations = scene.get("annotations") or []
+
+    for annotation in annotations:
+        if annotation.get("visible", True) is False:
+            continue
+
+        try:
+            x = float(annotation.get("x", 0.0))
+            y = float(annotation.get("y", 0.0))
+            z = float(annotation.get("z", 0.0))
+        except (TypeError, ValueError):
+            continue
+
+        text = _strip_plotly_html(
+            annotation.get("text", "")
+        )
+
+        if not text:
+            continue
+
+        font = dict(annotation.get("font") or {})
+
+        color = _parse_plotly_color(
+            font.get("color", "black")
+        )
+
+        font_size = float(
+            font.get("size", 18)
+        )
+
+        actor = vtk.vtkBillboardTextActor3D()
+        actor.SetInput(
+            _vtk_safe_text(text)
+        )
+        actor.SetPosition(
+            x,
+            y,
+            z,
+        )
+
+        text_property = actor.GetTextProperty()
+
+        text_property.SetColor(*color)
+        text_property.SetFontFamilyToArial()
+        text_property.SetFontSize(
+            max(
+                1,
+                int(round(font_size * max(1, int(scale)))),
+            )
+        )
+
+        if "<b>" in str(annotation.get("text", "")):
+            text_property.BoldOn()
+
+        text_property.SetJustificationToCentered()
+        text_property.SetVerticalJustificationToCentered()
+
+        renderer.AddActor(actor)
 
 def _render_fig_json_to_png_vtk(
     fig_json: dict, w: int, h: int, s: int, fontsize: int = 18
@@ -936,120 +1022,143 @@ def _render_fig_json_to_png_vtk(
     # below one zooms out without changing the Plotly viewing direction.
     camera.Zoom(0.82)
     renderer.ResetCameraClippingRange(bounds)
-
+    _add_vtk_scene_annotations(
+        renderer,
+        scene,
+        scale=s,
+    )
     # Add scene axes around the rendered data.
-    axes = vtk.vtkCubeAxesActor()
-    axes.SetBounds(bounds)
-    axes.SetCamera(camera)
-    # Keep the axes readable in publication-size exports.
-    if hasattr(axes, "SetNumberOfLabels"):
-        axes.SetNumberOfLabels(5)
-    axes.SetXTitle(_scene_axis_title(scene, "xaxis", "X"))
-    axes.SetYTitle(_scene_axis_title(scene, "yaxis", "Y"))
-    axes.SetZTitle(_scene_axis_title(scene, "zaxis", "Z"))
-    # Separate tick labels and titles from the axis lines.
-    if hasattr(axes, "SetLabelOffset"):
-        axes.SetLabelOffset(8.0)
+    ###################################################################
+    # ------------------------------------------------------------
+    # Scene axes
+    # ------------------------------------------------------------
+    xaxis_layout = dict(scene.get("xaxis") or {})
+    yaxis_layout = dict(scene.get("yaxis") or {})
+    zaxis_layout = dict(scene.get("zaxis") or {})
 
-    if hasattr(axes, "SetTitleOffset"):
-        axes.SetTitleOffset(18.0)
+    show_x_axis = bool(xaxis_layout.get("visible", True))
+    show_y_axis = bool(yaxis_layout.get("visible", True))
+    show_z_axis = bool(zaxis_layout.get("visible", True))
 
-    max_span = max(
-        bounds[1] - bounds[0],
-        bounds[3] - bounds[2],
-        bounds[5] - bounds[4],
-    )
+    if show_x_axis or show_y_axis or show_z_axis:
+        axes = vtk.vtkCubeAxesActor()
+        axes.SetBounds(bounds)
+        axes.SetCamera(camera)
 
-    if max_span < 0.1:
-        decimals = 3
-    elif max_span < 1.0:
-        decimals = 2
-    elif max_span < 10.0:
-        decimals = 1
-    else:
-        decimals = 0
+        if hasattr(axes, "SetXAxisVisibility"):
+            axes.SetXAxisVisibility(show_x_axis)
+            axes.SetYAxisVisibility(show_y_axis)
+            axes.SetZAxisVisibility(show_z_axis)
 
-    label_format = f"%.{decimals}f"
+        if hasattr(axes, "SetNumberOfLabels"):
+            axes.SetNumberOfLabels(5)
 
-    axes.SetXLabelFormat(label_format)
-    axes.SetYLabelFormat(label_format)
-    axes.SetZLabelFormat(label_format)
+        axes.SetXTitle(_scene_axis_title(scene, "xaxis", "X"))
+        axes.SetYTitle(_scene_axis_title(scene, "yaxis", "Y"))
+        axes.SetZTitle(_scene_axis_title(scene, "zaxis", "Z"))
 
-    axes.SetFlyModeToOuterEdges()
-    axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
-    show_grid = any(
-        bool((scene.get(ax) or {}).get("showgrid", True))
-        for ax in ("xaxis", "yaxis", "zaxis")
-    )
-    axes.SetDrawXGridlines(show_grid)
-    axes.SetDrawYGridlines(show_grid)
-    axes.SetDrawZGridlines(show_grid)
+        if hasattr(axes, "SetLabelOffset"):
+            axes.SetLabelOffset(8.0)
 
-    # Presentation-friendly axes: black and large enough for exported frames.
-    axis_color = (0.0, 0.0, 0.0)
-    axis_fontsize = max(18, int(fontsize))
+        if hasattr(axes, "SetTitleOffset"):
+            axes.SetTitleOffset(18.0)
 
-    # vtkCubeAxesActor scales 3D text automatically. SetScreenSize is the
-    # effective control for visible text size in VTK 9.3.x.
-    if hasattr(axes, "SetScreenSize"):
-        axes.SetScreenSize(max(40, float(axis_fontsize) * 4.0))
+        max_span = max(
+            bounds[1] - bounds[0],
+            bounds[3] - bounds[2],
+            bounds[5] - bounds[4],
+        )
 
-    # Prefer 2D text actors when supported so explicit font sizes are respected.
-    if hasattr(axes, "SetUseTextActor3D"):
-        axes.SetUseTextActor3D(False)
+        if max_span < 0.1:
+            decimals = 3
+        elif max_span < 1.0:
+            decimals = 2
+        elif max_span < 10.0:
+            decimals = 1
+        else:
+            decimals = 0
 
-    for axis_index in range(3):
-        title_prop = axes.GetTitleTextProperty(axis_index)
-        label_prop = axes.GetLabelTextProperty(axis_index)
+        label_format = f"%.{decimals}f"
 
-        title_prop.SetFontFamilyToArial()
-        label_prop.SetFontFamilyToArial()
+        axes.SetXLabelFormat(label_format)
+        axes.SetYLabelFormat(label_format)
+        axes.SetZLabelFormat(label_format)
 
-        title_prop.SetColor(*axis_color)
-        label_prop.SetColor(*axis_color)
+        axes.SetFlyModeToOuterEdges()
+        axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
 
-        title_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
-        label_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
+        show_grid = any(
+            bool((scene.get(ax) or {}).get("showgrid", True))
+            and bool((scene.get(ax) or {}).get("visible", True))
+            for ax in ("xaxis", "yaxis", "zaxis")
+        )
 
-        # Rotate tick-value text
-        label_prop.SetOrientation(45.0)
+        axes.SetDrawXGridlines(show_grid and show_x_axis)
+        axes.SetDrawYGridlines(show_grid and show_y_axis)
+        axes.SetDrawZGridlines(show_grid and show_z_axis)
 
-        title_prop.BoldOn()
-        label_prop.BoldOn()
+        axis_color = (0.0, 0.0, 0.0)
+        axis_fontsize = max(18, int(fontsize))
 
-    axis_line_props = (
-        axes.GetXAxesLinesProperty(),
-        axes.GetYAxesLinesProperty(),
-        axes.GetZAxesLinesProperty(),
-    )
-    for prop in axis_line_props:
-        prop.SetColor(*axis_color)
-        prop.SetOpacity(1.0)
-        prop.SetLineWidth(2.0)
+        if hasattr(axes, "SetScreenSize"):
+            axes.SetScreenSize(max(40, float(axis_fontsize) * 4.0))
 
-    grid_props = (
-        axes.GetXAxesGridlinesProperty(),
-        axes.GetYAxesGridlinesProperty(),
-        axes.GetZAxesGridlinesProperty(),
-    )
-    for prop in grid_props:
-        prop.SetColor(*axis_color)
-        prop.SetOpacity(0.35)
-        prop.SetLineWidth(1.0)
+        if hasattr(axes, "SetUseTextActor3D"):
+            axes.SetUseTextActor3D(False)
 
-    # Some VTK builds expose separate inner-grid properties.
-    for getter_name in (
-        "GetXAxesInnerGridlinesProperty",
-        "GetYAxesInnerGridlinesProperty",
-        "GetZAxesInnerGridlinesProperty",
-    ):
-        getter = getattr(axes, getter_name, None)
-        if getter is not None:
-            prop = getter()
+        for axis_index in range(3):
+            title_prop = axes.GetTitleTextProperty(axis_index)
+            label_prop = axes.GetLabelTextProperty(axis_index)
+
+            title_prop.SetFontFamilyToArial()
+            label_prop.SetFontFamilyToArial()
+
+            title_prop.SetColor(*axis_color)
+            label_prop.SetColor(*axis_color)
+
+            title_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
+            label_prop.SetFontSize(max(40, int(axis_fontsize * 2)))
+
+            label_prop.SetOrientation(45.0)
+
+            title_prop.BoldOn()
+            label_prop.BoldOn()
+
+        axis_line_props = (
+            axes.GetXAxesLinesProperty(),
+            axes.GetYAxesLinesProperty(),
+            axes.GetZAxesLinesProperty(),
+        )
+
+        for prop in axis_line_props:
             prop.SetColor(*axis_color)
-            prop.SetOpacity(0.25)
+            prop.SetOpacity(1.0)
+            prop.SetLineWidth(2.0)
 
-    renderer.AddActor(axes)
+        grid_props = (
+            axes.GetXAxesGridlinesProperty(),
+            axes.GetYAxesGridlinesProperty(),
+            axes.GetZAxesGridlinesProperty(),
+        )
+
+        for prop in grid_props:
+            prop.SetColor(*axis_color)
+            prop.SetOpacity(0.35)
+            prop.SetLineWidth(1.0)
+
+        for getter_name in (
+            "GetXAxesInnerGridlinesProperty",
+            "GetYAxesInnerGridlinesProperty",
+            "GetZAxesInnerGridlinesProperty",
+        ):
+            getter = getattr(axes, getter_name, None)
+
+            if getter is not None:
+                prop = getter()
+                prop.SetColor(*axis_color)
+                prop.SetOpacity(0.25)
+
+        renderer.AddActor(axes)
 
     # Recompute clipping after the final camera and axes setup.
     renderer.ResetCameraClippingRange(bounds)
