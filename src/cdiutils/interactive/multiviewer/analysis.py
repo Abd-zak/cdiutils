@@ -298,3 +298,81 @@ def write_mesh(path, verts, faces, scalars=None, scalar_name="scalar"):
             f"Unsupported mesh format {ext!r}; use .stl, .ply, .obj or .vtk"
         )
     return path
+
+
+# --------------------------------------------------------------------------
+# Colour ranges and units
+# --------------------------------------------------------------------------
+
+#: Colour-range modes: key -> label shown in the panel.
+RANGE_MODES = {
+    "minmax": "min – max",
+    "p1": "1 – 99 %",
+    "p5": "5 – 95 %",
+    "sym": "± max |v|",
+    "sym99": "± 99 % |v|",
+    "manual": "manual",
+}
+RANGE_ALIASES = {
+    "auto": "minmax",
+    "data": "minmax",
+    "min-max": "minmax",
+    "symmetric": "sym",
+    "percentile": "p1",
+    "1-99": "p1",
+    "5-95": "p5",
+}
+
+
+def range_mode(value) -> str:
+    """Canonical colour-range mode (raises on unknown names)."""
+    key = str(value).strip().lower()
+    key = RANGE_ALIASES.get(key, key)
+    if key not in RANGE_MODES:
+        raise ValueError(
+            f"Unknown colour range {value!r}; use one of {list(RANGE_MODES)}"
+        )
+    return key
+
+
+def color_limits(values, mode="minmax"):
+    """``(cmin, cmax)`` of the finite ``values`` for a range ``mode``.
+
+    ``minmax``: data range; ``p1`` / ``p5``: 1-99 % / 5-95 % percentiles
+    (robust to outliers); ``sym`` / ``sym99``: symmetric around zero from
+    the largest / 99th-percentile absolute value (strain, phase, differences).
+    """
+    v = np.asarray(values, dtype=float).ravel()
+    v = v[np.isfinite(v)]
+    if not v.size:
+        return 0.0, 1.0
+    if mode in ("p1", "p5"):
+        q = 1 if mode == "p1" else 5
+        lo, hi = (float(x) for x in np.percentile(v, [q, 100 - q]))
+    elif mode in ("sym", "sym99"):
+        a = np.abs(v)
+        m = float(a.max() if mode == "sym" else np.percentile(a, 99))
+        lo, hi = -m, m
+    else:
+        lo, hi = float(v.min()), float(v.max())
+    if hi <= lo:
+        hi = lo + 1e-12
+    return lo, hi
+
+
+def parse_unit(value):
+    """``(label, scale)`` from ``"rad"``, ``("%", 100)``,
+    ``{"unit": "%", "scale": 100}`` or ``None``."""
+    if value is None:
+        return "", 1.0
+    if isinstance(value, str):
+        return value, 1.0
+    if isinstance(value, dict):
+        return str(value.get("unit", "")), float(value.get("scale", 1.0))
+    label, scale = value
+    return str(label or ""), float(scale)
+
+
+def guess_unit(name: str):
+    """Default unit of a field from its name (only unambiguous cases)."""
+    return ("rad", 1.0) if "phase" in str(name).lower() else ("", 1.0)

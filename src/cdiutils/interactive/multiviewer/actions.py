@@ -28,9 +28,16 @@ import ipywidgets as widgets
 import numpy as np
 from IPython.display import display
 
+from . import analysis as mva
 from . import geometry as geo
 
 REQ = object()  # marks a required parameter
+
+
+def _unit_arg(v):
+    """YAML/JSON lists -> (label, scale) tuples for set_units."""
+    return tuple(v) if isinstance(v, list) else v
+
 
 STYLE_KEYS = {
     "thr": "isosurface level",
@@ -44,8 +51,11 @@ STYLE_KEYS = {
     "as_mask": "isosurface of the thresholded mask",
     "abs_iso": "isosurface of |value| (default True for volumes)",
     "show_colorbar": "show the colorbar",
-    "auto_range": "colour range from the data",
-    "range": "(cmin, cmax); sets auto_range to False",
+    "auto_range": "colour range from the data (False = manual range)",
+    "range": "(cmin, cmax) for a manual range, or a preset: minmax, p1 "
+    "(1-99 %), p5 (5-95 %), sym (± max |v|), sym99 (± 99 % |v|)",
+    "range_mode": "minmax, p1, p5, sym, sym99 or manual",
+    "range_all": "one colour range for all conditions",
     "range_min": "lower bound of the colour-range slider",
     "range_max": "upper bound of the colour-range slider",
     "color": "colour of lines and arrows",
@@ -481,6 +491,15 @@ _register(
         main="dark",
         category="Scene",
         example={"theme": True},
+    ),
+    Action(
+        "units",
+        "Units shown on the colorbars: {field: unit} or {field: [unit, "
+        "scale]} (values shown x scale, e.g. ['%', 100] for a strain).",
+        {"units": P(REQ, "{field: 'rad'} or {field: ['%', 100]}")},
+        main="units",
+        category="Scene",
+        example={"units": {"phase": "rad", "het_strain": ["%", 100]}},
     ),
     Action(
         "grid",
@@ -992,6 +1011,16 @@ class ActionsMixin:
                     f"{where}: cannot colour by '{kw['color_by']}'"
                     f"{_suggest(kw['color_by'], sorted(specials | vols))}"
                 )
+            for rk in ("range_mode", "range"):
+                if isinstance(kw.get(rk), str):
+                    try:
+                        mva.range_mode(kw[rk])
+                    except ValueError:
+                        problems.append(
+                            f"{where}: {rk}={kw[rk]!r} must be one of "
+                            f"{', '.join(mva.RANGE_MODES)}"
+                            f"{_suggest(kw[rk], [*mva.RANGE_MODES, *mva.RANGE_ALIASES])}"
+                        )
             if "nan_policy" in kw and kw["nan_policy"] not in geo.NAN_POLICIES:
                 problems.append(
                     f"{where}: nan_policy must be one of {', '.join(geo.NAN_POLICIES)}"
@@ -1207,7 +1236,11 @@ class ActionsMixin:
         self._select_edit_layer(self._resolve_layer_name(layer))
 
     def _act_edit(self, layer, **params):
-        if "range" in params and "auto_range" not in params:
+        if (
+            "range" in params
+            and not isinstance(params["range"], str)
+            and "auto_range" not in params
+        ):
             params["auto_range"] = False
         self.set_layer_params(layer, **params)
 
@@ -1232,7 +1265,11 @@ class ActionsMixin:
                 self.delete_layer(name, cascade=False)
         new = adder(name=name, **kw)
         if style:
-            if "range" in style and "auto_range" not in style:
+            if (
+                "range" in style
+                and not isinstance(style["range"], str)
+                and "auto_range" not in style
+            ):
                 style["auto_range"] = False
             self.set_layer_params(new, **style)
         if select:
@@ -1305,6 +1342,11 @@ class ActionsMixin:
 
     def _act_theme(self, dark):
         self.theme_toggle.value = bool(dark)
+
+    def _act_units(self, units):
+        if not isinstance(units, dict):
+            raise ValueError("units must be a dict {field: unit}")
+        self.set_units({k: _unit_arg(v) for k, v in units.items()})
 
     def _act_grid(self, show):
         self.grid_toggle.value = bool(show)
@@ -1415,6 +1457,12 @@ class ActionsMixin:
         steps = []
         if len(self._conditions) > 1:
             steps.append({"condition": self._cond_index})
+        units = {
+            k: (lab if sc == 1.0 else [lab, sc])
+            for k, (lab, sc) in self.field_units.items()
+        }
+        if units:
+            steps.append({"units": units})
         default_fams = "100, 110, 111"
         fams = ", ".join(lab.strip("{}") for lab, _ in self.facet_families)
         if (
@@ -1514,7 +1562,7 @@ class ActionsMixin:
         cur = self._style(name)
         out = {}
         for k, v in cur.items():
-            if k in ("range_min", "range_max") or k not in base:
+            if k in ("range_min", "range_max", "auto_range") or k not in base:
                 continue
             if k == "range":
                 if not cur["auto_range"]:

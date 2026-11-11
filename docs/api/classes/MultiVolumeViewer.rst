@@ -6,7 +6,7 @@ MultiVolumeViewer (multi-layer 3D viewer)
 .. autoclass:: MultiVolumeViewer
    :members: set_data, set_condition, get_volume, sample, add_slice, add_plane,
       add_clip, add_difference, add_region, add_lines, add_fitted_line,
-      add_arrows, add_axes_triad, add_scale_bar, set_layer_params,
+      add_arrows, add_axes_triad, add_scale_bar, set_layer_params, set_units,
       rename_layer, delete_layer, probe, line_profile, facet_stats,
       region_stats, set_facet_settings, set_ortho_center, link_cameras,
       export_mesh, layer_mesh, get_view_state, set_view_state, save_state,
@@ -50,6 +50,8 @@ Several conditions, a clip coloured by strain and dislocation lines::
     centroid, direction = fit_line_3d(extract_structure(dislo_mask))
     viewer.add_fitted_line("dislocation", centroid, direction)
     viewer.add_difference("delta phase", "phase", ref=0)
+    viewer.set_units(het_strain=("%", 100))            # strain shown in %
+    viewer.set_layer_params("cut", range_mode="sym", range_all=True)
     viewer.show()
 
     viewer.facet_stats("amplitude", "het_strain")

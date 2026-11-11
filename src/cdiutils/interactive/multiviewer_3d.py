@@ -46,6 +46,7 @@ Physical coordinates start at the centre of voxel ``(0, 0, 0)``.
 """
 
 import asyncio
+import contextlib
 import json
 import warnings
 from collections import OrderedDict
@@ -167,6 +168,10 @@ class MultiVolumeViewer(
     iso_step : marching-cubes step (2 or 3 speeds up very large volumes).
     default_cmaps : optional ``{layer: cmap}``; layers whose name contains
         ``"phase"`` default to the cyclic ``"twilight"`` map.
+    field_units : optional ``{field: unit}`` shown on the colorbars, where
+        ``unit`` is a label (``"rad"``) or ``(label, scale)`` to display the
+        values multiplied by ``scale`` (``("%", 100)`` for a strain).
+        Fields whose name contains ``"phase"`` default to ``"rad"``.
     """
 
     def __init__(
@@ -190,6 +195,7 @@ class MultiVolumeViewer(
         facet_tolerance: float = 10.0,
         iso_step: int = 1,
         default_cmaps: dict | None = None,
+        field_units: dict | None = None,
     ):
         super().__init__()
         if PLOT_ORDER not in ("xyz", "zyx"):
@@ -236,6 +242,9 @@ class MultiVolumeViewer(
         self.facet_tolerance = float(facet_tolerance)
         self.iso_step = max(1, int(iso_step))
         self.default_cmaps = dict(default_cmaps or {})
+        self.field_units = {
+            k: mva.parse_unit(v) for k, v in (field_units or {}).items()
+        }
 
         self._conditions, self._cond_labels, self._cond_index = [], [], 0
         self.dict_data = {}
@@ -247,7 +256,9 @@ class MultiVolumeViewer(
         self._layer_transform: dict = {}
         self._data_version = 0
         self._vol_cache, self._interp_cache = {}, {}
-        self._geom_cache, self._surf_cache = _LRU(24), _LRU(48)
+        self._cond_caches = {}  # condition -> (volume, interpolator) caches
+        self._range_all_cache = _LRU(64)
+        self._geom_cache, self._surf_cache = _LRU(32), _LRU(64)
         self._trace_order, self._trace_cbar = [], {}
         self._batch, self._dirty = False, False
         self._export_task, self._anim_cancel = None, False
@@ -367,17 +378,60 @@ class MultiVolumeViewer(
             )
         self._cond_index = index
         self.dict_data = self._conditions[index]
-        self._bump_data()
+        # Signatures include the condition, so geometry cached for other
+        # conditions stays valid; volumes/interpolators are per condition.
+        self._vol_cache, self._interp_cache = self._caches_of(index)
         self._update_condition_ui()
         self._tools_after_data()
         self._rebuild()
 
     def _bump_data(self):
         self._data_version += 1
-        self._vol_cache.clear()
-        self._interp_cache.clear()
+        self._vol_cache, self._interp_cache = {}, {}
+        self._cond_caches = {
+            self._cond_index: (self._vol_cache, self._interp_cache)
+        }
+        self._range_all_cache.clear()
         self._geom_cache.clear()
         self._surf_cache.clear()
+
+    def _caches_of(self, index, keep=4):
+        """Volume and interpolator caches of a condition (a few are kept)."""
+        hit = self._cond_caches.pop(index, None) or ({}, {})
+        self._cond_caches[index] = hit  # most recent last
+        while len(self._cond_caches) > keep:
+            old = next(iter(self._cond_caches))
+            if old == self._cond_index:  # never drop the current condition
+                self._cond_caches[old] = self._cond_caches.pop(old)
+                old = next(iter(self._cond_caches))
+            self._cond_caches.pop(old)
+        return hit
+
+    @contextlib.contextmanager
+    def _in_condition(self, index):
+        """Temporarily evaluate volumes in condition ``index``."""
+        index = int(index)
+        if index == self._cond_index:
+            yield
+            return
+        saved = (
+            self._cond_index,
+            self.dict_data,
+            self._vol_cache,
+            self._interp_cache,
+        )
+        try:
+            self._cond_index = index
+            self.dict_data = self._conditions[index]
+            self._vol_cache, self._interp_cache = self._caches_of(index)
+            yield
+        finally:
+            (
+                self._cond_index,
+                self.dict_data,
+                self._vol_cache,
+                self._interp_cache,
+            ) = saved
 
     # =========================================================================
     # Volume registry (raw + derived), signatures and caches
@@ -394,7 +448,7 @@ class MultiVolumeViewer(
         s = self._layers[key]
         t = s["type"]
         if t == "raw":
-            return ("raw", key, self._data_version)
+            return ("raw", key, self._data_version, self._cond_index)
         if t == "diff":
             b = s.get("b")
             return (
@@ -402,6 +456,7 @@ class MultiVolumeViewer(
                 self._sig(s["a"]),
                 self._sig(b) if b else ("ref", int(s.get("ref") or 0)),
                 self._data_version,
+                self._cond_index,
             )
         if t == "region":
             return (
@@ -446,18 +501,8 @@ class MultiVolumeViewer(
         return arr
 
     def _volume_in_condition(self, key, index):
-        if index == self._cond_index:
+        with self._in_condition(index):
             return np.asarray(self.get_volume(key), dtype=float)
-        cur = self._cond_index
-        saved = (self.dict_data, self._data_version, dict(self._vol_cache))
-        try:
-            self._cond_index, self.dict_data = index, self._conditions[index]
-            self._data_version = -index - 1  # temporary signature space
-            self._vol_cache = {}
-            return np.asarray(self.get_volume(key), dtype=float)
-        finally:
-            self._cond_index = cur
-            self.dict_data, self._data_version, self._vol_cache = saved
 
     def _region_mask(self, s):
         sup = np.asarray(self.get_volume(s["support"]), dtype=float)
@@ -770,11 +815,16 @@ class MultiVolumeViewer(
             if sel == "__constant__":
                 cmin, cmax, cbar = 0.0, 1.0, None
             else:
-                cmin, cmax = self._color_range(
-                    name, style, *geo.finite_range(vals), sync
+                unit, scale = self._field_unit(
+                    self._color_field(name, spec, sel)
                 )
+                if scale != 1.0:
+                    vals = np.asarray(vals, dtype=float) * scale
+                cmin, cmax = self._color_range(name, spec, style, vals, sync)
                 cbar = (
-                    self._colorbar_dict(title, cbar_index)
+                    self._colorbar_dict(
+                        self._cbar_title(title, unit), cbar_index
+                    )
                     if self._wants_cbar(style)
                     else None
                 )
@@ -843,9 +893,10 @@ class MultiVolumeViewer(
         if sel == "__constant__":
             cmin, cmax, cbar = 0.0, 1.0, None
         else:
-            cmin, cmax = self._color_range(
-                name, style, *geo.finite_range(C), sync
-            )
+            unit, scale = self._field_unit(self._color_field(name, spec, sel))
+            if scale != 1.0:
+                C *= scale
+            cmin, cmax = self._color_range(name, spec, style, C, sync)
             title = (
                 name
                 if sel in ("__self__", "__facet__")
@@ -854,7 +905,7 @@ class MultiVolumeViewer(
                 else sel
             )
             cbar = (
-                self._colorbar_dict(title, cbar_index)
+                self._colorbar_dict(self._cbar_title(title, unit), cbar_index)
                 if self._wants_cbar(style)
                 else None
             )
@@ -950,18 +1001,139 @@ class MultiVolumeViewer(
                 )
         return anns
 
-    # --- colour ranges and colorbars ----------------------------------------
-    def _color_range(self, name, style, dmin, dmax, sync):
+    # --- colour ranges, units and colorbars ----------------------------------
+    @staticmethod
+    def _range_mode(style):
+        """Effective range mode; ``auto_range=False`` always means manual."""
+        if not style.get("auto_range", True):
+            return "manual"
+        mode = style.get("range_mode") or "minmax"
+        return "minmax" if mode == "manual" else mode
+
+    def _color_range(self, name, spec, style, vals, sync):
+        dmin, dmax = geo.finite_range(vals)
+        mode = self._range_mode(style)
+        auto = None
+        if mode != "manual":
+            auto = mva.color_limits(vals, mode)
+            if style.get("range_all") and len(self._conditions) > 1:
+                auto = self._range_all(name, spec, style, auto)
         w = self._layer_widgets.get(name)
         if sync and w is not None and "range_slider" in w:
-            self._sync_range_widget(w, dmin, dmax, bool(style["auto_range"]))
-            if not style["auto_range"]:
+            lo_b, hi_b = (
+                (min(dmin, auto[0]), max(dmax, auto[1]))
+                if auto
+                else (dmin, dmax)
+            )
+            self._sync_range_widget(w, lo_b, hi_b, auto is not None, auto)
+            if auto is None:
                 lo, hi = w["range_slider"].value
                 return float(lo), float(hi) if hi > lo else float(lo) + 1e-12
-        if style["auto_range"] or style.get("range") is None:
+        if auto is not None:
+            return auto
+        if style.get("range") is None:
             return dmin, dmax
         lo, hi = map(float, style["range"])
         return lo, hi if hi > lo else lo + 1e-12
+
+    _RANGE_IRRELEVANT = (
+        "op",
+        "cmap",
+        "show_colorbar",
+        "range",
+        "range_min",
+        "range_max",
+        "color",
+        "width",
+        "range_all",
+    )
+
+    def _range_all(self, name, spec, style, current):
+        """Colour range shared by all conditions (union of their ranges)."""
+        key = (
+            name,
+            self._data_version,
+            repr(spec),
+            repr(
+                sorted(
+                    (k, v)
+                    for k, v in style.items()
+                    if k not in self._RANGE_IRRELEVANT
+                    and not k.startswith("light_")
+                )
+            ),
+            repr(self._layers),
+            repr(self._layer_transform.get(name)),
+            repr(sorted(self.field_units.items())),
+        )
+        hit = self._range_all_cache.get(key)
+        if hit is None:
+            st = dict(style, range_all=False)
+            lo, hi = np.inf, -np.inf
+            for i in range(len(self._conditions)):
+                with self._in_condition(i):
+                    tr, info = self._build_trace(
+                        name, spec=spec, style=st, sync=False
+                    )
+                cmin, cmax = (
+                    getattr(tr, "cmin", None),
+                    getattr(tr, "cmax", None),
+                )
+                if cmin is not None and not info.get("empty"):
+                    lo, hi = min(lo, float(cmin)), max(hi, float(cmax))
+            hit = (lo, hi) if hi > lo else None
+            self._range_all_cache[key] = hit
+            while len(self._range_all_cache) > self._range_all_cache.maxsize:
+                self._range_all_cache.popitem(last=False)
+        return hit if hit is not None else current
+
+    def _unit_of(self, key):
+        """``(label, scale)`` of a volume (derived layers use their source)."""
+        if key in self.field_units:
+            return self.field_units[key]
+        s = self._layers.get(key) or {}
+        if s.get("type") == "diff":
+            return self._unit_of(s["a"])
+        if s.get("type") == "region":
+            return self._unit_of(s["field"])
+        return mva.guess_unit(key)
+
+    def _color_field(self, name, spec, sel):
+        """The volume (or coordinate) a layer is coloured by."""
+        if sel in COORD_SEL:
+            return sel
+        if sel in self._layers and self._layers[sel]["type"] in VOLUME_TYPES:
+            return sel
+        return self._color_source(name, spec)
+
+    def _field_unit(self, field):
+        if field in COORD_SEL:
+            return (self.unit or "", 1.0)
+        return self._unit_of(field) if field else ("", 1.0)
+
+    @staticmethod
+    def _cbar_title(title, unit):
+        return f"{title} ({unit})" if unit else str(title)
+
+    def set_units(self, units: dict | None = None, **kw):
+        """Units shown on the colorbars, per field.
+
+        ``viewer.set_units(phase="rad", het_strain=("%", 100))`` labels the
+        phase colorbars "rad" and shows the strain multiplied by 100 with a
+        "%" label (colour values and manual ranges are then in percent;
+        probes and statistics keep the raw values). Derived layers
+        (differences, shell/core) use the unit of their source. ``None``
+        restores the default (``"rad"`` for names containing ``phase``).
+        """
+        for k, v in {**(units or {}), **kw}.items():
+            if v is None:
+                self.field_units.pop(k, None)
+            else:
+                self.field_units[k] = mva.parse_unit(v)
+        for n, w in self._layer_widgets.items():
+            w["_reset_bounds"] = True
+            self._sync_unit_widgets(n)
+        self._refresh(None)
 
     @staticmethod
     def _wants_cbar(style):
@@ -1583,6 +1755,7 @@ class MultiVolumeViewer(
                 lab.strip("{}") for lab, _ in self.facet_families
             ),
             "facet_tolerance": self.facet_tolerance,
+            "field_units": {k: list(v) for k, v in self.field_units.items()},
         }
 
     def set_view_state(self, state: dict):
@@ -1610,6 +1783,11 @@ class MultiVolumeViewer(
             self.facet_tolerance = float(
                 state.get("facet_tolerance", self.facet_tolerance)
             )
+            if "field_units" in state:
+                self.field_units = {
+                    k: mva.parse_unit(v)
+                    for k, v in state["field_units"].items()
+                }
             for L in state["layers"]:
                 name, spec = L["name"], dict(L["spec"])
                 for k in ("normal", "origin0"):
@@ -1649,6 +1827,8 @@ class MultiVolumeViewer(
             self.grid_toggle.value = bool(state.get("grid", True))
             if len(self._conditions) > 1:
                 self.set_condition(int(state.get("condition", 0)))
+            for n in self._layer_widgets:
+                self._sync_unit_widgets(n)
             self._after_layers_changed(select=None)
         finally:
             self._batch = False

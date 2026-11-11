@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 
+from . import analysis as mva
 from . import geometry as geo
 
 LIGHT_DEFAULTS = dict(
@@ -561,14 +562,50 @@ class UIMixin:
         )  # solid gray isosurfaces, coloured slices
 
     def _range_source(self, name, spec):
+        """Values bounding the initial colour range (display units)."""
         t = spec["type"]
         if t in ("raw", "diff", "region"):
-            return self.get_volume(name)
-        if t == "clip":
-            return self.get_volume(spec["source"])
-        if t in ("slice", "plane"):
-            return self._surface_data(spec)[0]
-        return np.array([0.0, 1.0])
+            vals = self.get_volume(name)
+        elif t == "clip":
+            vals = self.get_volume(spec["source"])
+        elif t in ("slice", "plane"):
+            vals = self._surface_data(spec)[0]
+        else:
+            return np.array([0.0, 1.0])
+        scale = self._unit_of(self._color_source(name, spec))[1]
+        return vals if scale == 1.0 else np.asarray(vals, float) * scale
+
+    # --- units ----------------------------------------------------------------
+    def _unit_field_of(self, name):
+        w, spec = self._layer_widgets.get(name, {}), self._layers[name]
+        sel = w["color_by"].value if "color_by" in w else "__self__"
+        if sel in ("__constant__", "__facet__"):
+            return None
+        return self._color_field(name, spec, sel)
+
+    def _sync_unit_widgets(self, name):
+        w = self._layer_widgets.get(name)
+        if not w or "u_unit" not in w:
+            return
+        field = self._unit_field_of(name)
+        label, scale = self._field_unit(field) if field else ("", 1.0)
+        coord = field is None or str(field).startswith("__")
+        with self._muted(w):
+            w["u_unit"].value, w["u_scale"].value = label, scale
+            w["u_unit"].disabled = w["u_scale"].disabled = coord
+            w["u_unit"].description = (
+                "unit" if coord else f"unit of {field}"[:24]
+            )
+
+    def _on_unit_change(self, name):
+        w = self._layer_widgets.get(name)
+        if w is None or w.get("_mute"):
+            return
+        field = self._unit_field_of(name)
+        if field is None or str(field).startswith("__"):
+            return
+        scale = float(w["u_scale"].value) or 1.0
+        self.set_units({field: (w["u_unit"].value.strip(), scale)})
 
     def _set_thr_bounds(self, name, keep_value=True):
         w, spec = self._layer_widgets[name], self._layers[name]
@@ -673,11 +710,39 @@ class UIMixin:
                 indent=False,
                 layout=_lay("auto"),
             )
-            w["auto_range"] = widgets.Checkbox(
-                value=True,
-                description="auto range",
+            w["range_mode"] = widgets.Dropdown(
+                options=[(lab, k) for k, lab in mva.RANGE_MODES.items()],
+                value="minmax",
+                description="range",
+                style=D,
+                layout=_lay("48%"),
+            )
+            w["range_all"] = widgets.Checkbox(
+                value=False,
+                description="same for all conditions",
+                tooltip="One colour range for every condition "
+                "(union of their ranges)",
                 indent=False,
-                layout=_lay("auto"),
+                layout=_lay(
+                    "auto",
+                    display="" if len(self._conditions) > 1 else "none",
+                ),
+            )
+            w["u_unit"] = widgets.Text(
+                value="",
+                description="unit",
+                placeholder="e.g. rad, %",
+                tooltip="Unit of the colour field (all layers using it)",
+                continuous_update=False,
+                style=D,
+                layout=_lay("48%"),
+            )
+            w["u_scale"] = widgets.FloatText(
+                value=1.0,
+                description="× scale",
+                tooltip="Displayed values = field × scale (100 for %)",
+                style=D,
+                layout=_lay("48%"),
             )
             w["range_slider"] = widgets.FloatRangeSlider(
                 value=(0.0, 1.0),
@@ -756,6 +821,12 @@ class UIMixin:
                 or isinstance(wd, widgets.Button)
             ):
                 continue
+            if k.startswith("u_"):
+                wd.observe(
+                    lambda ch, h=h: self._on_unit_change(h["name"]),
+                    names="value",
+                )
+                continue
             if k.startswith("p_"):
                 wd.observe(
                     lambda ch, h=h: self._on_param_change(h["name"], ch),
@@ -779,6 +850,7 @@ class UIMixin:
             lo_, hi_ = geo.finite_range(self._range_source(name, spec))
             w["range_min"].value, w["range_max"].value = lo_, hi_
             self._sync_range_widget(w, lo_, hi_, True)
+            self._sync_unit_widgets(name)
         self._params_to_widgets(name)
         self._load_transform_widgets(name)
         w["_defaults"] = self._style(name)  # reference for to_actions()
@@ -1073,7 +1145,9 @@ class UIMixin:
             "nan_policy": g("nan_policy", "none"),
             "color_by": g("color_by", "__self__"),
             "show_colorbar": g("show_colorbar", False),
-            "auto_range": g("auto_range", True),
+            "range_mode": g("range_mode", "minmax"),
+            "range_all": g("range_all", False),
+            "auto_range": g("range_mode", "minmax") != "manual",
             "abs_iso": g("abs_iso", False),
             "range": tuple(g("range_slider", (0.0, 1.0))),
             "range_min": g("range_min", 0.0),
@@ -1101,9 +1175,20 @@ class UIMixin:
         with self._muted(w):
             for k, v in kw.items():
                 k = aliases.get(k, k)
+                if k == "range" and isinstance(v, str):  # preset name
+                    k, v = "range_mode", v
                 if k == "range":
                     w["_pending_range"] = tuple(float(x) for x in v)
                     continue
+                if k == "auto_range" and "range_mode" in w:
+                    if not v:
+                        k, v = "range_mode", "manual"
+                    elif w["range_mode"].value == "manual":
+                        k, v = "range_mode", "minmax"
+                    else:
+                        continue
+                if k == "range_mode":
+                    v = mva.range_mode(v)
                 if k not in w:
                     if k in (
                         "thr",
@@ -1116,6 +1201,8 @@ class UIMixin:
                         "color_by",
                         "show_colorbar",
                         "auto_range",
+                        "range_mode",
+                        "range_all",
                         "range_min",
                         "range_max",
                     ) or k.startswith("light_"):
@@ -1134,18 +1221,21 @@ class UIMixin:
                 ]:
                     raise ValueError(f"Cannot colour '{name}' by {v!r}")
                 w[k].value = v
-            if "auto_range" in w:
-                w["range_slider"].disabled = bool(w["auto_range"].value)
+            if "range_mode" in w:
+                w["range_slider"].disabled = w["range_mode"].value != "manual"
+        if "color_by" in kw:
+            self._sync_unit_widgets(name)
 
     def _on_style_change(self, name, ch):
         w = self._layer_widgets.get(name)
         if w is None or w.get("_mute"):
             return
         owner = ch.get("owner")
-        if owner is w.get("auto_range"):
-            w["range_slider"].disabled = bool(ch["new"])
+        if owner is w.get("range_mode"):
+            w["range_slider"].disabled = ch["new"] != "manual"
         if owner is w.get("color_by"):
             w["_reset_bounds"] = True
+            self._sync_unit_widgets(name)
         if owner is w.get("abs_iso"):
             self._set_thr_bounds(name, keep_value=True)
         if owner is w.get("op") or any(
@@ -1159,7 +1249,7 @@ class UIMixin:
                 return
         self._refresh([name])
 
-    def _sync_range_widget(self, w, dmin, dmax, auto):
+    def _sync_range_widget(self, w, dmin, dmax, auto, value=None):
         rs = w["range_slider"]
         reset = w.pop("_reset_bounds", False)
         if reset:  # new colour source: previous bounds and manual range are meaningless
@@ -1168,10 +1258,17 @@ class UIMixin:
         umin, umax = sorted(
             (float(w["range_min"].value), float(w["range_max"].value))
         )
+        pending = w.pop("_pending_range", None)
+        if pending is not None and not auto:
+            # an explicit manual range widens the slider bounds if needed
+            pl, ph = sorted(map(float, pending))
+            if pl < umin or ph > umax:
+                umin, umax = min(umin, pl), max(umax, ph)
+                with self._muted(w):
+                    w["range_min"].value, w["range_max"].value = umin, umax
         smin, smax = min(dmin, umin), max(dmax, umax)
         if smax <= smin:
             smax = smin + 1e-12
-        pending = w.pop("_pending_range", None)
         lo, hi = (
             pending
             if pending is not None
@@ -1186,7 +1283,7 @@ class UIMixin:
                 rs.min, rs.max = smin, smax
             rs.step = (smax - smin) / 300
             if auto:
-                rs.value = (dmin, dmax)
+                rs.value = value if value is not None else (dmin, dmax)
             else:
                 lo, hi = (
                     float(np.clip(lo, smin, smax)),
@@ -1296,11 +1393,16 @@ class UIMixin:
             style += [
                 widgets.HBox([w["cmap"], w["nan_policy"]], layout=_lay()),
                 widgets.HBox(
-                    [w["color_by"], w["show_colorbar"], w["auto_range"]],
+                    [w["color_by"], w["show_colorbar"]],
+                    layout=_lay(align_items="center"),
+                ),
+                widgets.HBox(
+                    [w["range_mode"], w["range_all"]],
                     layout=_lay(align_items="center"),
                 ),
                 w["range_slider"],
                 widgets.HBox([w["range_min"], w["range_max"]], layout=_lay()),
+                widgets.HBox([w["u_unit"], w["u_scale"]], layout=_lay()),
             ]
         else:
             style += [w["color"], w["width"]]

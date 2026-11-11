@@ -3,7 +3,7 @@
 ``viewer.help()`` gives an overview, ``viewer.help("actions")`` the list of
 script actions, ``viewer.help("slice")`` one action in detail (with examples
 using your own layer names), and ``viewer.help("coordinates" | "layers" |
-"conditions" | "facets" | "probe" | "export" | "state" | "edit")`` a topic.
+"conditions" | "colours" | "facets" | "probe" | "export" | "state" | "edit")`` a topic.
 
 ``viewer.tutorial()`` returns a step-by-step guide that runs each feature on
 the loaded data and shows the matching code.
@@ -36,6 +36,7 @@ TOPICS = {
     "layers": "Layer types",
     "coordinates": "Axes, PLOT_ORDER and units",
     "conditions": "Several datasets and differences",
+    "colours": "Colour ranges (symmetric, percentiles, all conditions) and units",
     "facets": "Facet colouring and tables",
     "probe": "Probe, line profiles, orthoslices, shell/core statistics",
     "export": "Images, animations and meshes",
@@ -355,6 +356,40 @@ class HelpMixin:
             "Scripts: <code>{'condition': '1 bar'}</code>. Changes relative to a reference condition:</p>"
             + _code(
                 f"{{'difference': 'dphase', 'a': '{n['phase']}', 'ref': 0, 'cmap': 'RdBu_r'}}"
+            )
+        )
+
+    def _help_colours(self):
+        n = self._example_names()
+        rows = [
+            ["minmax", "data range (default)"],
+            ["p1 / p5", "1–99 % / 5–95 % percentiles: ignores outliers"],
+            [
+                "sym",
+                "± max |value|: zero in the middle (strain, phase, differences)",
+            ],
+            ["sym99", "± 99th percentile of |value|"],
+            ["manual", "the cmin/cmax slider (or range=[cmin, cmax])"],
+        ]
+        return (
+            "<h3>Colour ranges</h3>"
+            + _table(rows, ["range", "meaning"])
+            + "<p><i>same for all conditions</i> uses one range for every condition (the union of "
+            "their ranges), so colours can be compared between conditions and animations do "
+            "not flicker.</p>"
+            + _code(
+                f"{{'edit': '{n['het_strain']}', 'range': 'sym', 'range_all': True, 'cmap': 'RdBu_r'}}\n"
+                f"{{'edit': '{n['phase']}', 'range': [-1.5, 1.5]}}   # manual"
+            )
+            + "<h3>Units</h3><p>Colorbar titles show the unit of the colour field "
+            "(<code>rad</code> by default for names containing <i>phase</i>). A scale "
+            "multiplies the displayed values, e.g. a strain in %; probes and statistics "
+            "keep raw values. Derived layers use the unit of their source. In the panel: "
+            "<i>unit</i> and <i>× scale</i> under the colour range.</p>"
+            + _code(
+                f"v.set_units({n['het_strain']}=('%', 100), {n['phase']}='rad')\n"
+                f"{{'units': {{'{n['het_strain']}': ['%', 100]}}}}        # in a script\n"
+                f"MultiVolumeViewer(data, field_units={{'{n['het_strain']}': ('%', 100)}})"
             )
         )
 

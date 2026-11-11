@@ -46,6 +46,16 @@ Unreleased
   receive the scene once per export and then only the per-frame change
   (camera or swept layer); decoded triangles of unchanged layers are reused
   (also in ``safe`` mode). Workers stop with ``viewer.close()``.
+* Colour ranges: presets ``minmax``, ``p1`` / ``p5`` (percentiles),
+  ``sym`` / ``sym99`` (symmetric around zero) and ``manual``, in the panel
+  and in scripts (``{"edit": "strain", "range": "sym"}``); *same for all
+  conditions* shares one range across conditions. An explicit manual range
+  widens the slider bounds.
+* Units on colorbars: ``field_units=`` / ``set_units()`` / ``{"units": ...}``
+  with an optional display scale (``("%", 100)``); ``rad`` by default for
+  phases; derived layers use their source's unit; kept in state files and
+  action scripts. New help topic ``help("colours")``.
+* Switching conditions keeps the geometry already computed for the others.
 
 Version 0.2.0 (Current)
 ------------------------
