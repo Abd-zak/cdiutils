@@ -119,6 +119,41 @@ class AnimMixin:
             layout=L(width="190px"),
         )
 
+        self.anim_smooth = widgets.Checkbox(
+            value=False,
+            description="Smooth edges",
+            indent=False,
+            tooltip="Render at 2x and downsample: smoother outlines (data values are not changed)",
+            layout=L(width="auto"),
+        )
+        self.anim_flat = widgets.Checkbox(
+            value=False,
+            description="Flat colours",
+            indent=False,
+            tooltip="One colour per triangle (no colour blending inside triangles)",
+            layout=L(width="auto"),
+        )
+
+        self.anim_backend = widgets.Dropdown(
+            options=[
+                ("Built-in", "software"),
+                ("Kaleido", "kaleido"),
+                ("VTK", "vtk"),
+            ],
+            value=str(self._requested_backend or "software").replace(
+                "auto", "software"
+            ),
+            description="Renderer",
+            style={"description_width": "60px"},
+            layout=L(width="190px"),
+            tooltip="Built-in: numpy + matplotlib, works everywhere. "
+            "Kaleido (Chrome) and VTK are optional.",
+        )
+        self.anim_backend.observe(
+            lambda ch: setattr(self, "rendering_backend", ch["new"]),
+            names="value",
+        )
+
         self.anim_rot_type = widgets.Dropdown(
             options=[
                 ("— Select —", None),
@@ -272,6 +307,9 @@ class AnimMixin:
                     self.anim_width,
                     self.anim_height,
                     self.anim_scale,
+                    self.anim_backend,
+                    self.anim_smooth,
+                    self.anim_flat,
                 ),
                 self.anim_rotation_box,
                 self.anim_layer_box,
@@ -474,6 +512,14 @@ class AnimMixin:
         )
         return d
 
+    def _render_options(self, smooth=None, flat=None):
+        return {
+            "smooth": bool(
+                self.anim_smooth.value if smooth is None else smooth
+            ),
+            "flat": bool(self.anim_flat.value if flat is None else flat),
+        }
+
     def write_image(
         self,
         out_path,
@@ -481,8 +527,14 @@ class AnimMixin:
         height=None,
         scale=1,
         rendering_backend=None,
+        smooth=None,
+        flat=None,
     ):
-        """Save the current view as PNG with the chosen (or the viewer's) backend."""
+        """Save the current view as PNG.
+
+        ``smooth`` / ``flat`` (software renderer) default to the export
+        panel's *Smooth edges* / *Flat colours* checkboxes.
+        """
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         width, height = (
@@ -498,6 +550,7 @@ class AnimMixin:
             int(scale),
             backend,
             self.fontsize,
+            self._render_options(smooth, flat),
         )
         if not png.startswith(b"\x89PNG"):
             raise RuntimeError(
@@ -547,6 +600,8 @@ class AnimMixin:
         normal_layer=None,
         degrees=None,
         queue=False,
+        smooth=None,
+        flat=None,
     ):
         """Export a camera rotation (MP4 / GIF / PNG frames).
 
@@ -589,7 +644,14 @@ class AnimMixin:
             return {"data": base["data"], "layout": lay}
 
         return self._launch_export(
-            n, produce, fmt, fps, name, "rotation", queue=queue
+            n,
+            produce,
+            fmt,
+            fps,
+            name,
+            "rotation",
+            queue=queue,
+            options=self._render_options(smooth, flat),
         )
 
     def start_layer_export(
@@ -604,6 +666,8 @@ class AnimMixin:
         auto_trim=None,
         min_valid=None,
         queue=False,
+        smooth=None,
+        flat=None,
     ):
         """Sweep a layer parameter (opacity, thr, pos, offset) and export it.
 
@@ -670,10 +734,19 @@ class AnimMixin:
             return {"data": data, "layout": base["layout"]}
 
         return self._launch_export(
-            len(values), produce, fmt, fps, name, "layer_anim"
+            len(values),
+            produce,
+            fmt,
+            fps,
+            name,
+            "layer_anim",
+            queue=queue,
+            options=self._render_options(smooth, flat),
         )
 
-    def _launch_export(self, n, produce, fmt, fps, name, stem, queue=False):
+    def _launch_export(
+        self, n, produce, fmt, fps, name, stem, queue=False, options=None
+    ):
         fmt = (fmt or self.anim_format.value or "mp4").lower()
         fps = int(fps or self.anim_fps.value)
         out = output_path(name or self.anim_name.value, fmt, stem)
@@ -689,7 +762,7 @@ class AnimMixin:
             t for t in self._export_tokens if not t["cancel"]
         ] + [token]
         self._anim_cancel = False
-        coro = self._export_coro(n, produce, out, fmt, fps, token)
+        coro = self._export_coro(n, produce, out, fmt, fps, token, options)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -711,7 +784,9 @@ class AnimMixin:
         self._export_task = task
         return task
 
-    async def _export_coro(self, n, produce, out, fmt, fps, token):
+    async def _export_coro(
+        self, n, produce, out, fmt, fps, token, options=None
+    ):
         t0 = time.perf_counter()
         W, H, S = (
             int(self.anim_width.value),
@@ -747,7 +822,7 @@ class AnimMixin:
                     n,
                     produce,
                     render_png,
-                    (W, H, S, backend, self.fontsize),
+                    (W, H, S, backend, self.fontsize, options),
                     sink,
                     mode=mode,
                     workers=self.render_workers,

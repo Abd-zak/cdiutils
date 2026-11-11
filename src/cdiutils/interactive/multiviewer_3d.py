@@ -30,8 +30,10 @@ linked orthoslices; linked cameras between viewers; mesh export
 Rendering and export
 --------------------
 The interactive view is Plotly. Static frames (``write_image`` and MP4 / GIF /
-PNG-sequence animations) use ``rendering_backend``: ``"kaleido"``, ``"vtk"``
-or ``"auto"`` (Kaleido, then VTK). The backend is tested on first use only.
+PNG-sequence animations) use ``rendering_backend``: ``"software"`` (default:
+built-in renderer, numpy + matplotlib, works on any server), ``"kaleido"``
+or ``"vtk"`` (tested on first use; the software renderer is used if they
+are missing). *Smooth edges* and *Flat colours* are export options.
 ``rendering_mode`` sets the concurrency: ``"safe"`` (sequential, default),
 ``"fast"`` / ``"process"`` (process pool of ``render_workers``).
 
@@ -178,7 +180,7 @@ class MultiVolumeViewer(
         render_workers: int | None = None,
         render_in_flight: int | None = None,
         rendering_mode: Literal["safe", "fast", "process"] = "safe",
-        rendering_backend: Literal["auto", "kaleido", "vtk"] = "auto",
+        rendering_backend: Literal["software", "kaleido", "vtk"] = "software",
         export_width: int | None = None,
         export_height: int | None = None,
         condition_labels=None,

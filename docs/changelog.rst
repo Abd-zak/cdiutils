@@ -34,6 +34,12 @@ Unreleased
   ``script()`` builder, ``to_actions()`` / ``save_actions()``; former action
   names still work.
 * Built-in ``help(topic)`` and a guided ``tutorial()`` on the user's data.
+* Built-in software renderer (``multiviewer.raster`` + ``multiviewer.overlay``,
+  numpy + matplotlib) is the default export backend: stills and animations
+  work on any server without a browser, display or GPU, with Plotly's camera,
+  axis padding and lighting model. Kaleido and VTK are optional and fall back
+  to it when unavailable. Export options *Smooth edges* (2x rendering) and
+  *Flat colours* (one colour per triangle); renderer selector in the panel.
 
 Version 0.2.0 (Current)
 ------------------------

@@ -371,7 +371,7 @@ def test_layer_export_png_frames(viewer, tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_render(fig_json, w, h, s, backend, fontsize):
+    def fake_render(fig_json, w, h, s, backend, fontsize, options=None):
         calls.append(fig_json)
         import io
 

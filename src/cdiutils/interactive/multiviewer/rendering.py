@@ -1,14 +1,15 @@
 """
 Static PNG rendering backends for :class:`MultiVolumeViewer`.
 
-``kaleido``  Plotly/Kaleido (closest to the interactive look; needs Chrome).
-``vtk``      Converts Mesh3d / Surface / Scatter3d(lines) traces to VTK and
-             renders offscreen (Linux: needs an X display, Xvfb is started
-             on demand).
-``auto``     Kaleido first, then VTK.
+``software`` Built-in renderer (default): numpy for the 3D part, matplotlib
+             for axes, colorbars and text (:mod:`.raster`, :mod:`.overlay`).
+             No browser, display or GPU needed.
+``kaleido``  Plotly/Kaleido (identical to the interactive look; needs Chrome).
+``vtk``      Converts the traces to VTK and renders offscreen (Linux: needs an
+             X display, Xvfb is started on demand).
 
-Backend availability is tested lazily (on the first export) and cached for
-the lifetime of the kernel, so creating a viewer stays instant.
+Kaleido and VTK are tested on first use and cached for the kernel lifetime;
+when they are unavailable the software renderer is used with a warning.
 """
 
 import base64
@@ -722,8 +723,28 @@ def _add_cube_axes(renderer, camera, scene, bounds, fontsize, scale=1):
 # =============================================================================
 # Backend dispatch (module-level so it can run in worker processes)
 # =============================================================================
-def render_png(fig_json, w, h, s, backend="kaleido", fontsize=18) -> bytes:
-    backend = str(backend or "kaleido").lower().strip()
+def render_png(
+    fig_json, w, h, s, backend="software", fontsize=18, options=None
+) -> bytes:
+    """Render a figure JSON to PNG bytes.
+
+    ``options`` (software backend): ``smooth`` (render at 2x, smoother
+    outlines) and ``flat`` (one colour per triangle).
+    """
+    backend = str(backend or "software").lower().strip()
+    if backend in ("software", "auto"):
+        from .overlay import render_software_png
+
+        opts = dict(options or {})
+        return render_software_png(
+            fig_json,
+            w,
+            h,
+            s,
+            fontsize=fontsize,
+            smooth=bool(opts.get("smooth", False)),
+            flat=bool(opts.get("flat", False)),
+        )
     if backend == "vtk":
         return render_fig_json_to_png_vtk(
             prepare_fig_json_for_vtk(fig_json), w, h, s, fontsize=fontsize
@@ -797,41 +818,46 @@ def _test_kaleido_backend(timeout=25):
 
 
 def resolve_backend(requested="auto"):
-    """Pick a working backend (cached). Falls back to the other one with a warning."""
-    requested = str(requested or "auto").lower().strip()
+    """Resolve the export backend (cached).
+
+    ``software`` (default, also ``auto``) needs only numpy and matplotlib.
+    ``kaleido`` and ``vtk`` are tested on first use; if unavailable, the
+    software renderer is used with a warning.
+    """
+    requested = str(requested or "software").lower().strip()
     if requested == "plotly":
         requested = "kaleido"
-    if requested not in ("auto", "kaleido", "vtk"):
+    if requested in (
+        "software",
+        "auto",
+    ):  # numpy + matplotlib: always available
+        return "software", {
+            "software": "Built-in renderer (numpy + matplotlib)."
+        }
+    if requested not in ("kaleido", "vtk"):
         raise ValueError(
-            f"rendering_backend must be 'auto', 'kaleido' or 'vtk'; got {requested!r}"
+            "rendering_backend must be 'software' (default), 'kaleido' or 'vtk'; "
+            f"got {requested!r}"
         )
     with _BACKEND_LOCK:
         if requested in _BACKEND_CACHE:
             return _BACKEND_CACHE[requested]
-        order = (
-            ["kaleido", "vtk"]
-            if requested == "auto"
-            else [requested, "vtk" if requested == "kaleido" else "kaleido"]
+        ok, msg = (
+            _test_kaleido_backend()
+            if requested == "kaleido"
+            else _test_vtk_backend()
         )
-        diag = {}
-        for i, b in enumerate(order):
-            ok, msg = (
-                _test_kaleido_backend()
-                if b == "kaleido"
-                else _test_vtk_backend()
+        diag = {requested: msg}
+        if ok:
+            out = (requested, diag)
+        else:
+            warnings.warn(
+                f"Rendering backend {requested!r} is unavailable ({msg}); using the built-in "
+                "software renderer instead.",
+                RuntimeWarning,
+                stacklevel=3,
             )
-            diag[b] = msg
-            if ok:
-                if i > 0 and requested != "auto":
-                    warnings.warn(
-                        f"Rendering backend {requested!r} is unavailable: {diag[order[0]]} "
-                        f"Switching to {b!r}.",
-                        RuntimeWarning,
-                        stacklevel=3,
-                    )
-                _BACKEND_CACHE[requested] = (b, diag)
-                return b, diag
-    raise RuntimeError(
-        "No usable rendering backend was found. "
-        f"Kaleido: {diag.get('kaleido', 'not tested')} | VTK: {diag.get('vtk', 'not tested')}"
-    )
+            diag["software"] = "Built-in renderer (numpy + matplotlib)."
+            out = ("software", diag)
+        _BACKEND_CACHE[requested] = out
+        return out

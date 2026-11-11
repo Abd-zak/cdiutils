@@ -393,18 +393,23 @@ class HelpMixin:
     def _help_export(self):
         n = self._example_names()
         return (
-            "<h3>Export</h3><p>Stills and animations use Kaleido or VTK (<code>rendering_backend</code>); "
-            "<code>rendering_mode='fast'</code> renders frames in parallel. Formats: mp4, gif, png (frame folder).</p>"
+            "<h3>Export</h3><p>Stills and animations use the <b>built-in renderer</b> by default "
+            "(numpy + matplotlib): it works on any server, without a browser, display or GPU, and gives the "
+            "same view as the screen. Kaleido or VTK can be chosen in the export panel "
+            "(<i>Renderer</i>) or with <code>rendering_backend=</code>. Options: <i>Smooth edges</i> "
+            "(renders at 2x for smoother outlines; data values are not changed) and <i>Flat colours</i> "
+            "(one colour per triangle, no blending inside triangles). Formats: mp4, gif, png (frame folder); "
+            "<i>Save as</i> takes a name or a path.</p>"
             + _code(
                 "v.run_actions([\n"
-                "    {'image': 'figures/view.png', 'scale': 2},\n"
+                "    {'image': 'figures/view.png', 'scale': 2, 'flat': True},\n"
                 "    {'rotation': 'orbit_z', 'frames': 120, 'name': 'figures/spin'},\n"
-                f"    {{'sweep': 'zmid', 'param': 'pos', 'range': [0, 63], 'format': 'gif'}},\n"
+                "    {'sweep': 'zmid', 'param': 'pos', 'range': [0, 63], 'format': 'gif', 'smooth': True},\n"
                 f"    {{'mesh': '{n['amplitude']}', 'path': 'figures/particle.ply'}},\n"
                 "])"
             )
-            + "<p>Exports run one after the other; later steps wait. In a script file, put the code under "
-            "<code>if __name__ == '__main__':</code> when using <code>rendering_mode='fast'</code>.</p>"
+            + "<p>Exports run one after the other; later steps wait. <code>rendering_mode='fast'</code> renders "
+            "frames in parallel (in a script file, put the code under <code>if __name__ == '__main__':</code>).</p>"
         )
 
     def _help_state(self):

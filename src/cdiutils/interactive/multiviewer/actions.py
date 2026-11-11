@@ -149,7 +149,11 @@ _EXPORT = {
     "format": P(
         None, "mp4, gif or png (folder of frames)", ("mp4", "gif", "png")
     ),
-    "name": P(None, "output name, without extension"),
+    "name": P(None, "output name or path, without extension"),
+    "smooth": P(
+        None, "smoother outlines (render at 2x); default: panel checkbox"
+    ),
+    "flat": P(None, "one colour per triangle; default: panel checkbox"),
 }
 
 ACTIONS = {}
@@ -530,7 +534,9 @@ _register(
             "width": P(None),
             "height": P(None),
             "scale": P(1),
-            "backend": P(None, "kaleido or vtk"),
+            "backend": P(None, "software (default), kaleido or vtk"),
+            "smooth": P(None, "smoother outlines (render at 2x)"),
+            "flat": P(None, "one colour per triangle"),
         },
         main="path",
         category="Output",
@@ -1316,11 +1322,23 @@ class ActionsMixin:
         if center is not None:
             self.set_ortho_center(center, coords="plot")
 
-    def _act_image(self, path, width, height, scale, backend):
-        return self.write_image(path, width, height, scale, backend)
+    def _act_image(self, path, width, height, scale, backend, smooth, flat):
+        return self.write_image(
+            path, width, height, scale, backend, smooth=smooth, flat=flat
+        )
 
     def _act_rotation(
-        self, mode, frames, degrees, axis, normal_layer, fps, format, name
+        self,
+        mode,
+        frames,
+        degrees,
+        axis,
+        normal_layer,
+        fps,
+        format,
+        name,
+        smooth,
+        flat,
     ):
         return self.start_rotation_export(
             mode,
@@ -1332,6 +1350,8 @@ class ActionsMixin:
             normal_layer,
             degrees,
             queue=True,
+            smooth=smooth,
+            flat=flat,
         )
 
     def _act_sweep(
@@ -1345,6 +1365,8 @@ class ActionsMixin:
         fps,
         format,
         name,
+        smooth,
+        flat,
     ):
         return self.start_layer_export(
             layer,
@@ -1357,6 +1379,8 @@ class ActionsMixin:
             skip_empty,
             min_valid,
             queue=True,
+            smooth=smooth,
+            flat=flat,
         )
 
     def _act_wait(self):
