@@ -6,8 +6,11 @@ subpackage holds its parts:
 
 - ``geometry``: coordinates, isosurfaces, slices, planes, clips (numpy only)
 - ``analysis``: facets, line profiles, shell/core masks, mesh writers
-- ``rendering``: still-image backends (Kaleido, VTK)
-- ``export``: ordered frame pipeline and MP4 / GIF / PNG writers
+- ``rendering``: still-image backends (built-in, Kaleido, VTK)
+- ``raster``, ``overlay``: built-in software renderer (numpy + matplotlib)
+- ``export``: ordered frame pipeline, render pool, MP4 / GIF / PNG writers
+- ``loader``: cdiutils results (.cxi / .npz / .vti) -> volumes
+- ``launcher``: notebook form to open cdiutils results
 - ``ui``: widgets and layer panel (mixin)
 - ``tools``: probe, facets, statistics, orthoslices, linked cameras (mixin)
 - ``anim``: animation export and live rotation (mixin)

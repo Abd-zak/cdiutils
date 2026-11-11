@@ -47,7 +47,7 @@ def output_path(raw: str, fmt: str, default_stem: str) -> Path:
         p.exists() and p.is_dir() and fmt != "png"
     ):
         p = p / default_stem
-    if p.suffix.lower() in (".mp4", ".gif", ".png"):
+    if p.suffix.lower() in (".mp4", ".gif", ".png", ".html"):
         p = p.with_suffix("")
     return p if fmt == "png" else p.with_name(f"{p.name}.{fmt}")
 

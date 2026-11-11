@@ -109,6 +109,12 @@ class AnimMixin:
         self.anim_stop_btn = widgets.Button(
             description="Stop", layout=L(width="90px")
         )
+        self.anim_html_btn = widgets.Button(
+            description="Save HTML",
+            tooltip="Interactive page of the current view (with a slider "
+            "over the conditions when there are several)",
+            layout=L(width="110px"),
+        )
         self.anim_fps = widgets.IntSlider(
             value=30,
             min=1,
@@ -372,6 +378,7 @@ class AnimMixin:
                     self.anim_format,
                     self.anim_save_btn,
                     self.anim_stop_btn,
+                    self.anim_html_btn,
                 ),
                 row(
                     self.anim_fps,
@@ -394,6 +401,7 @@ class AnimMixin:
 
         self.anim_save_btn.on_click(self._on_save_animation_clicked)
         self.anim_stop_btn.on_click(lambda _b: self._stop_export())
+        self.anim_html_btn.on_click(self._on_save_html_clicked)
         for wd in (
             self.anim_master_mode,
             self.anim_rot_type,
@@ -707,6 +715,126 @@ class AnimMixin:
         out_path.write_bytes(png)
         return out_path
 
+    def export_html(
+        self,
+        path,
+        conditions=False,
+        plotlyjs="embed",
+        shared_range=True,
+        label=None,
+        label_format=None,
+    ):
+        """Save the current view as an interactive HTML page (Plotly).
+
+        The page opens in any browser without Python: rotate, zoom, hover,
+        toggle traces. ``conditions=True`` (or a list of indices/labels)
+        adds a slider and a play button over the conditions, with the same
+        colour range (``shared_range``) and axes in every condition.
+        ``plotlyjs="embed"`` (default) works offline (~3.5 MB larger);
+        ``"cdn"`` makes a small file that needs internet to open.
+        """
+        import plotly.graph_objects as go
+        import plotly.io as pio
+
+        path = Path(path).expanduser()
+        if path.suffix.lower() not in (".html", ".htm"):
+            path = path.with_name(path.name + ".html")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        js = {"embed": True, "cdn": "cdn"}.get(plotlyjs, plotlyjs)
+        self._rebuild()
+        multi = len(self._conditions) > 1 and conditions not in (False, None)
+        if not multi:
+            d = self._export_base_json(
+                self.export_width, self.export_height, label, label_format
+            )
+            d["layout"].update(autosize=True, width=None, height=None)
+            fig = go.Figure(d)
+        else:
+            conds = self._resolve_conditions(
+                None if conditions is True else conditions
+            )
+            base, frames = self._condition_frames(
+                conds, bool(shared_range), True, 800, 600
+            )
+            idx = sorted(frames[conds[0]])
+            data = list(base["data"])
+            for i in idx:
+                data[i] = frames[conds[0]][i]
+            layout = dict(base["layout"], autosize=True)
+            layout.pop("width", None)
+            layout.pop("height", None)
+            anns = list(layout.get("annotations") or [])
+
+            def ann(c):
+                a = self._label_annotation(c, label, label_format)
+                return anns + ([a] if a else [])
+
+            layout["annotations"] = ann(conds[0])
+            names = [self._cond_labels[c] for c in conds]
+            fr = [
+                go.Frame(
+                    name=nm,
+                    data=[frames[c][i] for i in idx],
+                    traces=idx,
+                    layout={"annotations": ann(c)},
+                )
+                for c, nm in zip(conds, names)
+            ]
+            step = {
+                "frame": {"duration": 0, "redraw": True},
+                "mode": "immediate",
+                "transition": {"duration": 0},
+            }
+            layout["sliders"] = [
+                {
+                    "active": 0,
+                    "currentvalue": {"prefix": "condition: "},
+                    "pad": {"t": 30},
+                    "steps": [
+                        {
+                            "label": nm,
+                            "method": "animate",
+                            "args": [[nm], step],
+                        }
+                        for nm in names
+                    ],
+                }
+            ]
+            play = dict(step, frame={"duration": 800, "redraw": True})
+            layout["updatemenus"] = [
+                {
+                    "type": "buttons",
+                    "showactive": False,
+                    "x": 0.0,
+                    "y": 0.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                    "pad": {"t": 60},
+                    "buttons": [
+                        {
+                            "label": "▶ play",
+                            "method": "animate",
+                            "args": [None, dict(play, fromcurrent=True)],
+                        },
+                        {
+                            "label": "❚❚",
+                            "method": "animate",
+                            "args": [[None], step],
+                        },
+                    ],
+                }
+            ]
+            fig = go.Figure(data=data, layout=layout, frames=fr)
+        pio.write_html(
+            fig,
+            str(path),
+            include_plotlyjs=js,
+            full_html=True,
+            auto_play=False,
+            config={"displaylogo": False, "responsive": True},
+        )
+        return path
+
     # =========================================================================
     # Animation export
     # =========================================================================
@@ -734,6 +862,17 @@ class AnimMixin:
                 )
             elif self.anim_master_mode.value == "conditions":
                 self.start_condition_export()
+        except Exception as e:
+            self.anim_status.value = (
+                f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+            )
+
+    def _on_save_html_clicked(self, _b=None):
+        try:
+            self.anim_status.value = "Writing HTML…"
+            out = output_path(self.anim_name.value, "html", "view")
+            out = self.export_html(out, conditions=len(self._conditions) > 1)
+            self.anim_status.value = f"Saved: <code>{out.resolve()}</code>"
         except Exception as e:
             self.anim_status.value = (
                 f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
@@ -934,6 +1073,42 @@ class AnimMixin:
         )
         W, H = int(self.anim_width.value), int(self.anim_height.value)
         self.rotate_toggle.value = False
+        base, frames = self._condition_frames(conds, shared, fix, W, H)
+        annotations = list(base["layout"].get("annotations") or [])
+        eye0, up0, center, proj = self._current_camera()
+        n = len(conds) * hold
+
+        def produce(k):
+            c = conds[k // hold]
+            if k % hold and not deg:
+                return REPEAT
+            delta = {"traces": frames[c]}
+            ann = self._label_annotation(c, label, label_format)
+            delta["annotations"] = annotations + ([ann] if ann else [])
+            if deg:
+                R = geo.rodrigues(
+                    np.array([0.0, 0.0, 1.0]), math.radians(deg) * k / n
+                )
+                delta["camera"] = self._camera_dict(
+                    R @ eye0, R @ up0, center, proj
+                )
+            return delta
+
+        return self._launch_export(
+            n,
+            produce,
+            fmt,
+            fps,
+            name,
+            "conditions",
+            queue=queue,
+            options=self._render_options(smooth, flat),
+            base=base,
+        )
+
+    def _condition_frames(self, conds, shared, fix, W, H):
+        """Base scene and ``{condition: {trace index: trace json}}`` of the
+        visible layers; optional shared colour range and fixed axes."""
         self._rebuild()
         base = self._export_base_json(W, H, label=False)
         names = [
@@ -979,37 +1154,7 @@ class AnimMixin:
                     )
                     scene[f"{a}axis"] = ax
                 base["layout"] = dict(base["layout"], scene=scene)
-        annotations = list(base["layout"].get("annotations") or [])
-        eye0, up0, center, proj = self._current_camera()
-        n = len(conds) * hold
-
-        def produce(k):
-            c = conds[k // hold]
-            if k % hold and not deg:
-                return REPEAT
-            delta = {"traces": frames[c]}
-            ann = self._label_annotation(c, label, label_format)
-            delta["annotations"] = annotations + ([ann] if ann else [])
-            if deg:
-                R = geo.rodrigues(
-                    np.array([0.0, 0.0, 1.0]), math.radians(deg) * k / n
-                )
-                delta["camera"] = self._camera_dict(
-                    R @ eye0, R @ up0, center, proj
-                )
-            return delta
-
-        return self._launch_export(
-            n,
-            produce,
-            fmt,
-            fps,
-            name,
-            "conditions",
-            queue=queue,
-            options=self._render_options(smooth, flat),
-            base=base,
-        )
+        return base, frames
 
     def _launch_export(
         self,

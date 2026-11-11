@@ -4,7 +4,8 @@ MultiVolumeViewer (multi-layer 3D viewer)
 .. currentmodule:: cdiutils.interactive
 
 .. autoclass:: MultiVolumeViewer
-   :members: set_data, set_condition, get_volume, sample, add_slice, add_plane,
+   :members: from_cdiutils, launcher, set_data, set_condition, get_volume,
+      sample, add_slice, add_plane,
       add_clip, add_difference, add_region, add_lines, add_fitted_line,
       add_arrows, add_axes_triad, add_scale_bar, set_layer_params, set_units,
       rename_layer, delete_layer, probe, line_profile, facet_stats,
@@ -12,7 +13,7 @@ MultiVolumeViewer (multi-layer 3D viewer)
       export_mesh, layer_mesh, get_view_state, set_view_state, save_state,
       load_state, run_actions, run_actions_async, validate_actions,
       wait_for_script, script, to_actions, save_actions, help, tutorial,
-      write_image,
+      write_image, export_html,
       start_rotation_export, start_layer_export, start_condition_export,
       wait_for_export, show
    :show-inheritance:
@@ -33,6 +34,17 @@ default: plot x is the array's first axis). Line and arrow helpers accept
 
 Examples
 --------
+
+cdiutils results (configuration printed first; several scans become
+conditions)::
+
+    viewer = MultiVolumeViewer.from_cdiutils(
+        ["results/S101", "results/S102", "results/S103"],
+        label_from="pressure",          # or labels=[...], default: scan
+        fields=["amplitude", "phase", "het_strain"],
+    )
+    MultiVolumeViewer.launcher("results")   # the same, from a form
+
 
 Several conditions, a clip coloured by strain and dislocation lines::
 

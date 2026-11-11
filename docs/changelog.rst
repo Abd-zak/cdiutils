@@ -63,6 +63,20 @@ Unreleased
   (``{label}``, ``{index}``, ``{n}``) is written on condition animations and,
   with several conditions, on stills and other animations.
 * Software renderer: long colorbar titles are wrapped/shrunk to fit.
+* ``MultiVolumeViewer.from_cdiutils(paths)``: opens cdiutils results
+  (``S*_postprocessed_data.cxi``, ``S*_structural_properties.npz`` or
+  ``.vti``; a file, scan folder or folder of scans); several scans become
+  conditions (common grid, labels from scan, a parameter or given); voxel
+  size, pipeline isosurface and cdiutils units (nm, %, Å, rad) are used;
+  values outside the support masked; the configuration is printed first.
+* ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
+  labels, voxel size, units, options, start script) that opens the viewer
+  in its place, with *Show configuration* and *Back*.
+* ``export_html()``, *Save HTML* button and ``{"html": ...}`` action:
+  interactive Plotly page, optionally with a slider/play over conditions.
+* Isosurfaces coloured by a field defined only inside the support (cdiutils
+  strain, phase): interpolation ignores undefined corners, so surface
+  colours are no longer lost on the support edge.
 
 Version 0.2.0 (Current)
 ------------------------

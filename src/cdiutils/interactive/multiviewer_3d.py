@@ -269,6 +269,133 @@ class MultiVolumeViewer(
             self.set_data(dict_data, labels=condition_labels)
 
     # =========================================================================
+    # cdiutils results
+    # =========================================================================
+    @classmethod
+    def from_cdiutils(
+        cls,
+        paths,
+        fields=None,
+        labels=None,
+        label_from="scan",
+        mask_outside: bool = True,
+        normalise_amplitude: bool = True,
+        vti_convention: str = "cxi",
+        shape=None,
+        script=None,
+        verbose: bool = True,
+        **kwargs,
+    ):
+        """Open cdiutils post-processing results.
+
+        Parameters
+        ----------
+        paths : a result file (``S*_postprocessed_data.cxi``,
+            ``S*_structural_properties.npz`` or ``.vti``), a scan folder, a
+            folder of scans, or a list of them. Several results become
+            conditions (one per scan, cropped/padded to a common grid).
+        fields : names to show (default: amplitude, phase, displacement,
+            het_strain, het_strain_from_dspacing, dspacing,
+            lattice_parameter when present), or ``"all"``.
+        labels : condition labels; default from ``label_from``: ``"scan"``
+            (``S123``), ``"file"``, a parameter name of the CXI file, or a
+            callable ``f(result) -> str``.
+        mask_outside : values outside the support set to NaN (cdiutils
+            stores 0 there), except amplitude.
+        normalise_amplitude : amplitude / max, so the pipeline isosurface
+            (``used_isosurface``) is applied to the amplitude layer.
+        vti_convention : axis convention of ``.vti`` files (``"cxi"`` or
+            ``"xu"``); CXI and NPZ files are read in their own axes.
+        shape : common grid shape (default: the largest).
+        script : actions (list, YAML/JSON path) run after opening.
+        verbose : print the configuration first.
+        **kwargs : other :class:`MultiVolumeViewer` arguments, e.g.
+            ``voxel_size`` to override the file, ``field_units``.
+
+        cdiutils units are used: voxel size in nm, ``het_strain`` in %,
+        displacement / d-spacing / lattice parameter in Å, phase in rad.
+        """
+        from .multiviewer import loader
+
+        results, labs, notes = loader.load(
+            paths,
+            fields,
+            labels,
+            label_from,
+            mask_outside,
+            normalise_amplitude,
+            vti_convention,
+            shape,
+        )
+        return cls._from_results(
+            results, labs, notes, script=script, verbose=verbose, **kwargs
+        )
+
+    @classmethod
+    def _from_results(
+        cls, results, labels, notes, script=None, verbose=True, **kwargs
+    ):
+        from .multiviewer import loader
+
+        vs = kwargs.pop("voxel_size", None)
+        if vs is None:
+            vs = next((r.voxel_size for r in results if r.voxel_size), None)
+        if vs is None:
+            raise ValueError(
+                f"No voxel size in {results[0].path.name}; pass voxel_size="
+            )
+        vs = tuple(float(x) for x in np.ravel(vs))
+        vs = vs * 3 if len(vs) == 1 else vs
+        unit = kwargs.pop("unit", "nm")
+        names = list(results[0].fields)
+        units = {k: v for k, v in loader.CDIUTILS_UNITS.items() if k in names}
+        units.update(
+            {
+                k: mva.parse_unit(v)
+                for k, v in (kwargs.pop("field_units", None) or {}).items()
+            }
+        )
+        thr = next(
+            (r.isosurface for r in results if r.isosurface is not None), None
+        )
+        if verbose:
+            print(loader.summary(results, labels, vs, unit, units, thr, notes))
+        multi = len(results) > 1
+        viewer = cls(
+            [r.fields for r in results] if multi else results[0].fields,
+            voxel_size=vs,
+            unit=unit,
+            condition_labels=labels if multi else None,
+            field_units=units,
+            **kwargs,
+        )
+        if thr is not None and "amplitude" in viewer._layers:
+            viewer.set_layer_params("amplitude", thr=thr)
+        viewer.cdiutils_info = [
+            {
+                "path": str(r.path),
+                "scan": r.scan,
+                "voxel_size": r.voxel_size,
+                "isosurface": r.isosurface,
+                "convention": r.convention,
+                "params": r.params,
+            }
+            for r in results
+        ]
+        if script is not None:
+            viewer.run_actions(script)
+        return viewer
+
+    @classmethod
+    def launcher(cls, root=".", **kwargs):
+        """A small form to pick cdiutils results and options, then open the
+        viewer in its place (``launcher.viewer``). ``kwargs`` go to the
+        viewer (e.g. ``figsize``)."""
+        from .multiviewer.launcher import Launcher
+
+        return Launcher(cls, root, **kwargs)
+
+    # =========================================================================
     # Rendering backend (resolved lazily)
     # =========================================================================
     @property
@@ -512,26 +639,30 @@ class MultiVolumeViewer(
         )
         return shell if s["mode"] == "shell" else core
 
-    def _interp(self, key):
+    def _interp(self, key, nan_aware=False):
+        """Trilinear interpolator of a volume. ``nan_aware``: undefined
+        corners are ignored (colours on the edge of a support)."""
         sig = self._sig(key)
-        hit = self._interp_cache.get(key)
+        ck = (key, "nan_aware") if nan_aware else key
+        hit = self._interp_cache.get(ck)
         if hit is not None and hit[0] == sig:
             return hit[1]
         vol = np.asarray(self.get_volume(key))
         if vol.dtype.kind != "f":
             vol = vol.astype(np.float32)
         nz, ny, nx = vol.shape
-        fn = RegularGridInterpolator(
-            (
-                np.arange(nz, dtype=float),
-                np.arange(ny, dtype=float),
-                np.arange(nx, dtype=float),
-            ),
-            vol,
-            bounds_error=False,
-            fill_value=np.nan,
+        axes = (
+            np.arange(nz, dtype=float),
+            np.arange(ny, dtype=float),
+            np.arange(nx, dtype=float),
         )
-        self._interp_cache[key] = (sig, fn)
+        if nan_aware and not np.isfinite(vol).all():
+            fn = geo.NanAwareInterpolator(axes, vol)
+        else:
+            fn = RegularGridInterpolator(
+                axes, vol, bounds_error=False, fill_value=np.nan
+            )
+        self._interp_cache[ck] = (sig, fn)
         return fn
 
     def sample(self, key, points, coords="physical"):
@@ -806,9 +937,9 @@ class MultiVolumeViewer(
                 sel in self._layers
                 and self._layers[sel]["type"] in VOLUME_TYPES
             ):
-                vals = self._interp(sel)(verts_idx)
+                vals = self._interp(sel, policy != "none")(verts_idx)
             else:
-                vals = self._interp(src)(verts_idx)
+                vals = self._interp(src, policy != "none")(verts_idx)
             vals = geo.apply_nan_policy(vals, policy)
             if policy == "none":
                 vals = np.nan_to_num(vals, nan=0.0, posinf=0.0, neginf=0.0)

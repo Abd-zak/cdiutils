@@ -438,3 +438,28 @@ def arrow_mesh(
     if not verts:
         return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int64)
     return np.concatenate(verts), np.concatenate(faces)
+
+
+class NanAwareInterpolator:
+    """Trilinear interpolation that ignores undefined (NaN) corners.
+
+    The value is the weighted mean of the finite corners of the cell
+    (normalised convolution): ``interp(v * m) / interp(m)`` with ``m`` the
+    finite mask. Points whose cell has no finite corner are NaN. Used to
+    colour isosurfaces lying on the edge of a support, where plain
+    interpolation returns NaN as soon as one corner is outside.
+    """
+
+    def __init__(self, axes, vol):
+        from scipy.interpolate import RegularGridInterpolator
+
+        vol = np.asarray(vol, dtype=np.float32)
+        m = np.isfinite(vol)
+        kw = dict(bounds_error=False, fill_value=0.0)
+        self._v = RegularGridInterpolator(axes, np.where(m, vol, 0), **kw)
+        self._w = RegularGridInterpolator(axes, m.astype(np.float32), **kw)
+
+    def __call__(self, pts):
+        w = self._w(pts)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(w > 1e-6, self._v(pts) / w, np.nan)

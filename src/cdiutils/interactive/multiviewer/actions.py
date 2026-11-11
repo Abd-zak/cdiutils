@@ -563,6 +563,26 @@ _register(
         example={"image": "figures/view.png", "scale": 2},
     ),
     Action(
+        "html",
+        "Save the view as an interactive HTML page (opens in any browser).",
+        {
+            "path": P(),
+            "slider": P(
+                False, "True or a list of conditions: slider over them"
+            ),
+            "plotlyjs": P(
+                "embed",
+                "embed (offline) or cdn (small file)",
+                ("embed", "cdn"),
+            ),
+            "shared_range": P(True, "same colour range in every condition"),
+        },
+        main="path",
+        category="Output",
+        export=True,
+        example={"html": "figures/view.html", "slider": True},
+    ),
+    Action(
         "rotation",
         "Export a camera rotation.",
         {
@@ -1394,6 +1414,11 @@ class ActionsMixin:
     def _act_image(self, path, width, height, scale, backend, smooth, flat):
         return self.write_image(
             path, width, height, scale, backend, smooth=smooth, flat=flat
+        )
+
+    def _act_html(self, path, slider, plotlyjs, shared_range):
+        return self.export_html(
+            path, slider, plotlyjs, shared_range=shared_range
         )
 
     def _act_rotation(

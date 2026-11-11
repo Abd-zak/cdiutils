@@ -164,6 +164,9 @@ class HelpMixin:
             "(drag to rotate, scroll to zoom) and the animation export panel. <b>Right</b>: visible layers, "
             "theme/rotation/grid, the editor of the selected layer, <i>Create layer</i>, and the tool sections "
             "(probe, facets, shell/core statistics, orthoslices, save/load).</p>"
+            "<p>Open cdiutils results directly: <code>MultiVolumeViewer.from_cdiutils('results/S123')</code> "
+            "(a list of scans gives conditions), or pick them in a form: "
+            "<code>MultiVolumeViewer.launcher('results')</code>.</p>"
             "<p>Everything you can click can also be scripted, which makes a figure reproducible:</p>"
             + _code(code)
             + "<p>Tweak a view by hand, then turn it into a script with <code>v.save_actions('my_view.yaml')</code>; "
@@ -441,6 +444,7 @@ class HelpMixin:
                 "    {'rotation': 'orbit_z', 'frames': 120, 'name': 'figures/spin'},\n"
                 "    {'sweep': 'zmid', 'param': 'pos', 'range': [0, 63], 'format': 'gif', 'smooth': True},\n"
                 "    {'conditions': 'all', 'hold': 20, 'format': 'gif', 'name': 'figures/pressure'},\n"
+                "    {'html': 'figures/view.html', 'slider': True},   # interactive page\n"
                 f"    {{'mesh': '{n['amplitude']}', 'path': 'figures/particle.ply'}},\n"
                 "])"
             )
