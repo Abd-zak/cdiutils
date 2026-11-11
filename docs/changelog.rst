@@ -56,6 +56,13 @@ Unreleased
   phases; derived layers use their source's unit; kept in state files and
   action scripts. New help topic ``help("colours")``.
 * Switching conditions keeps the geometry already computed for the others.
+* Animation through conditions: ``start_condition_export()``, panel mode
+  *Conditions* and script action ``{"conditions": "all", "hold": 20}``;
+  frames held per condition are rendered once; shared colour range and
+  fixed axes by default; optional camera orbit. The condition label
+  (``{label}``, ``{index}``, ``{n}``) is written on condition animations and,
+  with several conditions, on stills and other animations.
+* Software renderer: long colorbar titles are wrapped/shrunk to fit.
 
 Version 0.2.0 (Current)
 ------------------------

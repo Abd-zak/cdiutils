@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 FORMATS = ("mp4", "gif", "png")
+REPEAT = "__repeat_previous_frame__"  # produce(k) result: reuse frame k-1
 
 
 def output_path(raw: str, fmt: str, default_stem: str) -> Path:
@@ -175,13 +176,16 @@ class FrameSink:
 def merge_delta(base, delta):
     """Full figure JSON from a base scene and a frame delta.
 
-    ``delta`` may hold ``camera`` (replaces ``layout.scene.camera``) and
-    ``traces`` (``{index: trace_json}``, replaces those traces).
+    ``delta`` may hold ``camera`` (replaces ``layout.scene.camera``),
+    ``traces`` (``{index: trace_json}``, replaces those traces) and
+    ``annotations`` (replaces ``layout.annotations``, e.g. a frame label).
     """
     data = list(base.get("data") or [])
     layout = base.get("layout") or {}
     for i, tr in (delta.get("traces") or {}).items():
         data[int(i)] = tr
+    if delta.get("annotations") is not None:
+        layout = dict(layout, annotations=delta["annotations"])
     if delta.get("camera") is not None:
         layout = dict(layout)
         layout["scene"] = dict(layout.get("scene") or {})
@@ -315,7 +319,8 @@ async def run_ordered_export(
     """Produce, render and write ``n_frames`` frames in order.
 
     ``produce(k)`` returns a figure JSON dict (or, with ``base``, a delta
-    for :func:`merge_delta`), or ``None`` to skip frame k.
+    for :func:`merge_delta`), ``None`` to skip frame k, or :data:`REPEAT`
+    to write the previous frame again (no rendering).
     ``render_fn(fig_json, *render_args)`` returns PNG bytes; it must be a
     module-level function when a process pool is used.
     Returns the number of frames written.
@@ -361,12 +366,17 @@ async def run_ordered_export(
             executor, render_fn, frame, *render_args
         )
 
+    last = None
+
     def _flush():
-        nonlocal nxt
+        nonlocal nxt, last
         while nxt in pending:
             png = pending.pop(nxt)
+            if png is REPEAT:
+                png = last
             if png:
                 sink.add(png)
+                last = png
             nxt += 1
             if on_progress is not None:
                 on_progress(nxt, n_frames)
@@ -386,8 +396,8 @@ async def run_ordered_export(
             if is_cancelled():
                 break
             fig_json = produce(k)
-            if fig_json is None:
-                pending[k] = None
+            if fig_json is None or fig_json is REPEAT:
+                pending[k] = fig_json
                 _flush()
             else:
                 tasks[asyncio.ensure_future(_render(k, fig_json))] = k

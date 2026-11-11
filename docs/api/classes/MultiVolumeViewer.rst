@@ -13,7 +13,8 @@ MultiVolumeViewer (multi-layer 3D viewer)
       load_state, run_actions, run_actions_async, validate_actions,
       wait_for_script, script, to_actions, save_actions, help, tutorial,
       write_image,
-      start_rotation_export, start_layer_export, wait_for_export, show
+      start_rotation_export, start_layer_export, start_condition_export,
+      wait_for_export, show
    :show-inheritance:
 
    Jupyter viewer for several scalar volumes on a shared voxel grid
@@ -64,6 +65,7 @@ notebook, ``await`` them to chain several::
                                        name="rotation")
     await viewer.start_layer_export("cut", "offset", (-60, 60), points=90,
                                     fmt="gif", name="cut_sweep")
+    await viewer.start_condition_export(hold=20, fmt="mp4", name="pressure")
 
 Scripts, help and tutorial
 --------------------------

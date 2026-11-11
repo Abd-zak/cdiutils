@@ -436,6 +436,8 @@ class UIMixin:
             self.cond_slider.value = self._cond_index
         lab = self._cond_labels[self._cond_index] if self._cond_labels else ""
         self.cond_label.value = f"<b>{lab}</b>"
+        if hasattr(self, "anim_label_row"):
+            self._sync_anim_ui()
 
     def _after_layers_changed(self, select=None):
         """Re-sync every widget that lists layers (keeps current values when still valid)."""

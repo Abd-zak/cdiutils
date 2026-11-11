@@ -609,6 +609,25 @@ _register(
         },
     ),
     Action(
+        "conditions",
+        "Export the visible layers through the conditions, with the "
+        "condition label on each frame.",
+        {
+            "conditions": P(None, "indices or labels (default: all)"),
+            "hold": P(None, "frames per condition (default 15)"),
+            "degrees": P(None, "camera orbit over the animation (default 0)"),
+            "shared_range": P(None, "one colour range (default True)"),
+            "fix_axes": P(None, "same axes in every frame (default True)"),
+            "label": P(None, "write the condition label (default True)"),
+            "label_format": P(None, "'{label}', '{index}/{n}', ..."),
+            **_EXPORT,
+        },
+        main="conditions",
+        category="Output",
+        export=True,
+        example={"conditions": "all", "hold": 20, "format": "gif"},
+    ),
+    Action(
         "wait",
         "Wait for the running exports before the next step.",
         {},
@@ -1025,8 +1044,16 @@ class ActionsMixin:
                 problems.append(
                     f"{where}: nan_policy must be one of {', '.join(geo.NAN_POLICIES)}"
                 )
+            conds = []
             if name == "condition" and "index" in kw:
-                c = kw["index"]
+                conds = [kw["index"]]
+            if name == "conditions":
+                if len(self._conditions) < 2:
+                    problems.append(f"{where}: there is only one condition")
+                c = kw.get("conditions")
+                if c not in (None, "all"):
+                    conds = c if isinstance(c, (list, tuple)) else [c]
+            for c in conds:
                 labels = list(self._cond_labels)
                 if isinstance(c, str) and not c.lstrip("-").isdigit():
                     if c not in labels:
@@ -1391,6 +1418,37 @@ class ActionsMixin:
             name,
             normal_layer,
             degrees,
+            queue=True,
+            smooth=smooth,
+            flat=flat,
+        )
+
+    def _act_conditions(
+        self,
+        conditions,
+        hold,
+        degrees,
+        shared_range,
+        fix_axes,
+        label,
+        label_format,
+        fps,
+        format,
+        name,
+        smooth,
+        flat,
+    ):
+        return self.start_condition_export(
+            conditions,
+            hold,
+            degrees,
+            fps,
+            format,
+            name,
+            shared_range=shared_range,
+            fix_axes=fix_axes,
+            label=label,
+            label_format=label_format,
             queue=True,
             smooth=smooth,
             flat=flat,

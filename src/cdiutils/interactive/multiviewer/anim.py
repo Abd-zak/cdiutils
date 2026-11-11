@@ -11,8 +11,8 @@ import ipywidgets as widgets
 import numpy as np
 
 from . import geometry as geo
-from .export import FrameSink, output_path, run_ordered_export
-from .rendering import render_png
+from .export import REPEAT, FrameSink, output_path, run_ordered_export
+from .rendering import decode_plotly_array, render_png
 
 ANIM_PARAMS = {
     "raw": ["opacity", "thr"],
@@ -30,6 +30,25 @@ PARAM_LABELS = {
     "pos": "slice position",
     "offset": "offset along normal",
 }
+
+
+def _trace_bounds(traces):
+    """(lo, hi) plot-coordinate bounds of trace JSONs (None if empty)."""
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+    for t in traces:
+        if t.get("visible") is False:
+            continue
+        for k, a in enumerate("xyz"):
+            v = t.get(a)
+            if v is None:
+                continue
+            v = decode_plotly_array(v, float).ravel()
+            v = v[np.isfinite(v)]
+            if v.size:
+                lo[k], hi[k] = min(lo[k], v.min()), max(hi[k], v.max())
+    if not np.all(np.isfinite(lo)):
+        return None, None
+    return lo, np.maximum(hi, lo + 1e-12)
 
 
 def _fmt_seconds(sec):
@@ -59,6 +78,7 @@ class AnimMixin:
                 ("— Select —", None),
                 ("Rotation", "rotation"),
                 ("Layer", "layer"),
+                ("Conditions", "conditions"),
             ],
             value=None,
             description="Animate",
@@ -260,6 +280,50 @@ class AnimMixin:
             tooltip="Slices/planes: minimum fraction of defined pixels",
         )
 
+        # --- condition label (all exports) and condition animation ---
+        self.anim_label = widgets.Checkbox(
+            value=True,
+            description="Condition label",
+            indent=False,
+            tooltip="Write the condition label on images and animations "
+            "(when there are several conditions)",
+            layout=L(width="auto"),
+        )
+        self.anim_label_fmt = widgets.Text(
+            value="{label}",
+            description="text",
+            tooltip="{label}, {index} (from 1) and {n} are replaced",
+            style={"description_width": "30px"},
+            layout=L(width="200px"),
+        )
+        self.anim_cond_hold = widgets.IntSlider(
+            value=15,
+            min=1,
+            max=240,
+            description="Frames each",
+            tooltip="Frames per condition (with FPS: how long each is shown)",
+            continuous_update=False,
+            style={"description_width": "85px"},
+            layout=L(width="320px"),
+        )
+        self.anim_cond_degrees = widgets.FloatText(
+            value=0.0,
+            description="Rotate (°)",
+            tooltip="Camera rotation (orbit Z) over the whole animation",
+            style=D,
+            layout=L(width="160px"),
+        )
+        self.anim_cond_shared = widgets.Checkbox(
+            value=True,
+            description="Same colour range for all conditions",
+            indent=False,
+        )
+        self.anim_cond_fix_axes = widgets.Checkbox(
+            value=True,
+            description="Same axes for all conditions",
+            indent=False,
+        )
+
         self.anim_status = widgets.HTML("")
         self.anim_progress = widgets.IntProgress(
             value=0, min=0, max=1, layout=L(width="100%")
@@ -292,6 +356,13 @@ class AnimMixin:
                 row(self.anim_auto_trim, self.anim_min_valid),
             ]
         )
+        self.anim_cond_box = widgets.VBox(
+            [
+                row(self.anim_cond_hold, self.anim_cond_degrees),
+                row(self.anim_cond_shared, self.anim_cond_fix_axes),
+            ]
+        )
+        self.anim_label_row = row(self.anim_label, self.anim_label_fmt)
         self.anim_panel = widgets.VBox(
             [
                 widgets.HTML("<b>Export animation</b>"),
@@ -311,8 +382,10 @@ class AnimMixin:
                     self.anim_smooth,
                     self.anim_flat,
                 ),
+                self.anim_label_row,
                 self.anim_rotation_box,
                 self.anim_layer_box,
+                self.anim_cond_box,
                 self.anim_status,
                 self.anim_progress,
             ],
@@ -358,6 +431,11 @@ class AnimMixin:
             "" if mode == "rotation" else "none"
         )
         self.anim_layer_box.layout.display = "" if mode == "layer" else "none"
+        multi = len(getattr(self, "_conditions", [])) > 1
+        self.anim_cond_box.layout.display = (
+            "" if mode == "conditions" else "none"
+        )
+        self.anim_label_row.layout.display = "" if multi else "none"
         rot = self.anim_rot_type.value
         self.anim_axis_box.layout.display = "" if rot == "axis" else "none"
         self.anim_normal_src.layout.display = "" if rot == "normal" else "none"
@@ -388,10 +466,14 @@ class AnimMixin:
                         else (hi - lo) / 500
                     )
                     self.anim_range.value = (lo, hi)
-        ready = (mode == "rotation" and rot is not None) or (
-            mode == "layer"
-            and self.anim_layer_key.value is not None
-            and self.anim_layer_param.value is not None
+        ready = (
+            (mode == "rotation" and rot is not None)
+            or (
+                mode == "layer"
+                and self.anim_layer_key.value is not None
+                and self.anim_layer_param.value is not None
+            )
+            or (mode == "conditions" and multi)
         )
         self.anim_save_btn.disabled = not ready
 
@@ -499,7 +581,10 @@ class AnimMixin:
     # =========================================================================
     # Still image
     # =========================================================================
-    def _export_base_json(self, width, height):
+    def _export_base_json(self, width, height, label=None, label_format=None):
+        """Figure JSON of the current view for exports (helper traces
+        dropped); with several conditions, the condition label is added
+        unless ``label=False`` (default: the panel's *Condition label*)."""
         d = self.fig.to_plotly_json()
         d["data"] = [
             t for t in d["data"] if not str(t.get("name", "")).startswith("__")
@@ -510,7 +595,68 @@ class AnimMixin:
             width=int(width),
             height=int(height),
         )
+        ann = self._label_annotation(self._cond_index, label, label_format)
+        if ann is not None:
+            d["layout"]["annotations"] = list(
+                d["layout"].get("annotations") or []
+            ) + [ann]
         return d
+
+    def _label_annotation(self, index, label=None, label_format=None):
+        """Paper annotation with the label of condition ``index`` (or None)."""
+        show = self.anim_label.value if label is None else bool(label)
+        if not show or len(self._conditions) < 2:
+            return None
+        fmt = label_format or self.anim_label_fmt.value or "{label}"
+        try:
+            text = fmt.format(
+                label=self._cond_labels[index],
+                index=index + 1,
+                n=len(self._conditions),
+            )
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(
+                f"Bad label text {fmt!r}: use {{label}}, {{index}}, {{n}}"
+            ) from e
+        dark = self._dark()
+        return dict(
+            text=f"<b>{text}</b>",
+            x=0.02,
+            y=0.97,
+            xref="paper",
+            yref="paper",
+            xanchor="left",
+            yanchor="top",
+            showarrow=False,
+            font=dict(
+                family="DejaVu Sans Bold",
+                size=int(self.fontsize * 1.8),
+                color="#e6eefc" if dark else "#000000",
+            ),
+            name="__condition_label",
+        )
+
+    def _resolve_conditions(self, conditions):
+        """Indices from None/'all', ints, labels or a mix."""
+        n = len(self._conditions)
+        if conditions is None or conditions == "all":
+            return list(range(n))
+        if isinstance(conditions, (int, str)):
+            conditions = [conditions]
+        out = []
+        for c in conditions:
+            if isinstance(c, str) and c in self._cond_labels:
+                out.append(self._cond_labels.index(c))
+            else:
+                i = int(c)
+                if not 0 <= i < n:
+                    raise IndexError(
+                        f"Condition {c!r} out of range (0..{n - 1})."
+                    )
+                out.append(i)
+        if not out:
+            raise ValueError("No condition to animate.")
+        return out
 
     def _render_options(self, smooth=None, flat=None):
         return {
@@ -529,11 +675,13 @@ class AnimMixin:
         rendering_backend=None,
         smooth=None,
         flat=None,
+        label=None,
     ):
         """Save the current view as PNG.
 
         ``smooth`` / ``flat`` (software renderer) default to the export
-        panel's *Smooth edges* / *Flat colours* checkboxes.
+        panel's *Smooth edges* / *Flat colours* checkboxes; ``label`` (several
+        conditions) to its *Condition label* checkbox.
         """
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -544,7 +692,7 @@ class AnimMixin:
         backend = str(rendering_backend or self.rendering_backend).lower()
         self._rebuild()
         png = render_png(
-            self._export_base_json(width, height),
+            self._export_base_json(width, height, label=label),
             width,
             height,
             int(scale),
@@ -584,6 +732,8 @@ class AnimMixin:
                     self.anim_layer_param.value,
                     self.anim_range.value,
                 )
+            elif self.anim_master_mode.value == "conditions":
+                self.start_condition_export()
         except Exception as e:
             self.anim_status.value = (
                 f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
@@ -733,6 +883,129 @@ class AnimMixin:
             fps,
             name,
             "layer_anim",
+            queue=queue,
+            options=self._render_options(smooth, flat),
+            base=base,
+        )
+
+    def start_condition_export(
+        self,
+        conditions=None,
+        hold=None,
+        degrees=None,
+        fps=None,
+        fmt=None,
+        name=None,
+        shared_range=None,
+        fix_axes=None,
+        label=None,
+        label_format=None,
+        queue=False,
+        smooth=None,
+        flat=None,
+    ):
+        """Export the visible layers through the conditions (MP4 / GIF / PNG).
+
+        ``conditions``: indices or labels (default: all, in order); ``hold``:
+        frames per condition; ``degrees``: optional camera orbit (Z) over the
+        whole animation; ``shared_range``: one colour range for all
+        conditions (layers with a manual range keep it); ``fix_axes``: same
+        axis ranges in every frame, so the camera does not jump; ``label`` /
+        ``label_format``: condition label written on each frame (``{label}``,
+        ``{index}``, ``{n}``). Frames repeated for ``hold`` are rendered
+        once. Returns the asyncio task (in a notebook) or the output path.
+        """
+        if len(self._conditions) < 2:
+            raise RuntimeError("There is only one condition.")
+        conds = self._resolve_conditions(conditions)
+        hold = max(1, int(self.anim_cond_hold.value if hold is None else hold))
+        deg = float(
+            self.anim_cond_degrees.value if degrees is None else degrees
+        )
+        shared = (
+            self.anim_cond_shared.value
+            if shared_range is None
+            else bool(shared_range)
+        )
+        fix = (
+            self.anim_cond_fix_axes.value
+            if fix_axes is None
+            else bool(fix_axes)
+        )
+        W, H = int(self.anim_width.value), int(self.anim_height.value)
+        self.rotate_toggle.value = False
+        self._rebuild()
+        base = self._export_base_json(W, H, label=False)
+        names = [
+            (i, t.get("name"))
+            for i, t in enumerate(base["data"])
+            if t.get("name") in self._layers
+        ]
+        styles = {}
+        for _, nm in names:
+            st = self._style(nm)
+            if shared and self._range_mode(st) != "manual":
+                st["range_all"] = True
+            styles[nm] = st
+        frames = {}  # condition -> {trace index: trace json}
+        for c in dict.fromkeys(conds):
+            with self._in_condition(c):
+                frames[c] = {
+                    i: self._build_trace(
+                        nm,
+                        style=styles[nm],
+                        cbar_index=self._cbar_index_of(nm),
+                        sync=False,
+                    )[0].to_plotly_json()
+                    for i, nm in names
+                }
+        if fix:
+            lo, hi = _trace_bounds(
+                [tr for f in frames.values() for tr in f.values()]
+                + [
+                    t
+                    for i, t in enumerate(base["data"])
+                    if i not in dict(names)
+                ]
+            )
+            if lo is not None:
+                pad = (hi - lo) / 32  # Plotly's autorange padding
+                scene = dict(base["layout"].get("scene") or {})
+                for k, a in enumerate("xyz"):
+                    ax = dict(scene.get(f"{a}axis") or {})
+                    ax.update(
+                        range=[float(lo[k] - pad[k]), float(hi[k] + pad[k])],
+                        autorange=False,
+                    )
+                    scene[f"{a}axis"] = ax
+                base["layout"] = dict(base["layout"], scene=scene)
+        annotations = list(base["layout"].get("annotations") or [])
+        eye0, up0, center, proj = self._current_camera()
+        n = len(conds) * hold
+
+        def produce(k):
+            c = conds[k // hold]
+            if k % hold and not deg:
+                return REPEAT
+            delta = {"traces": frames[c]}
+            ann = self._label_annotation(c, label, label_format)
+            delta["annotations"] = annotations + ([ann] if ann else [])
+            if deg:
+                R = geo.rodrigues(
+                    np.array([0.0, 0.0, 1.0]), math.radians(deg) * k / n
+                )
+                delta["camera"] = self._camera_dict(
+                    R @ eye0, R @ up0, center, proj
+                )
+            return delta
+
+        return self._launch_export(
+            n,
+            produce,
+            fmt,
+            fps,
+            name,
+            "conditions",
             queue=queue,
             options=self._render_options(smooth, flat),
             base=base,

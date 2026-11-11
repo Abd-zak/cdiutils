@@ -247,6 +247,28 @@ def _colorbars(fig_json):
     return out
 
 
+def _fit_title(fig, text, width_px):
+    """Keep a colorbar title inside the image: put a trailing "(unit)" on
+    its own line, then shrink the font if it is still too wide."""
+    r = fig.canvas.get_renderer()
+
+    def fits():
+        bb = text.get_window_extent(r)
+        return bb.x0 >= 0 and bb.x1 <= width_px
+
+    if fits():
+        return
+    label = text.get_text()
+    if " (" in label:
+        head, _, tail = label.rpartition(" (")
+        text.set_text(f"{head}\n({tail}")
+        text.set_multialignment("center")
+    for _ in range(8):
+        if fits():
+            return
+        text.set_fontsize(text.get_fontsize() * 0.85)
+
+
 def render_software_png(
     fig_json,
     width,
@@ -386,7 +408,8 @@ def render_software_png(
                 s,
                 text_color,
             )
-            cax.set_title(title, pad=6 * s, **f)
+            t = cax.set_title(title, pad=6 * s, **f)
+            _fit_title(fig, t, W)
 
     for a in (
         layout.get("annotations") or []
