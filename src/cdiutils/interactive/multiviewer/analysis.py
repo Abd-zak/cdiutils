@@ -1,0 +1,300 @@
+"""
+Analysis helpers for :class:`MultiVolumeViewer`: facet classification, line
+profiles, surface-shell / core statistics and mesh file writers.
+
+All functions are pure numpy/scipy and independent of the widgets.
+"""
+
+import itertools
+import re
+import struct
+from pathlib import Path
+
+import numpy as np
+from scipy.ndimage import distance_transform_edt
+
+# =============================================================================
+# Facets
+# =============================================================================
+FACET_COLORS = [
+    "#1f77b4",
+    "#d62728",
+    "#2ca02c",
+    "#ff7f0e",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#17becf",
+    "#bcbd22",
+    "#7f7f7f",
+]
+OTHER_COLOR = "#c8c8c8"
+
+
+def parse_hkl(item):
+    """'111', '1 1 1', '1,-1,0', (1, 1, 1) or '-113' -> tuple of 3 ints."""
+    if isinstance(item, (tuple, list, np.ndarray)):
+        h = tuple(int(v) for v in item)
+    else:
+        s = str(item).strip().strip("{}()[]<>")
+        parts = (
+            re.findall(r"-?\d+", s)
+            if re.search(r"[\s,;]", s)
+            else re.findall(r"-?\d", s)
+        )
+        h = tuple(int(p) for p in parts)
+    if len(h) != 3 or not any(h):
+        raise ValueError(f"Invalid hkl: {item!r}")
+    return h
+
+
+def parse_families(spec):
+    """Families as text ('100, 110, 111') or a list -> list of (label, hkl)."""
+    if isinstance(spec, str):
+        items = [s for s in re.split(r"[;,]|\s{2,}", spec) if s.strip()]
+        if len(items) == 1 and " " in items[0].strip():
+            toks = items[0].split()
+            if all(len(re.findall(r"-?\d", t)) == 3 for t in toks):
+                items = toks
+    else:
+        items = list(spec)
+    out = []
+    for it in items:
+        h = tuple(sorted((abs(v) for v in parse_hkl(it)), reverse=True))
+        lab = "{" + "".join(str(v) for v in h) + "}"
+        if lab not in [o[0] for o in out]:
+            out.append((lab, h))
+    return out
+
+
+def family_vectors(hkl):
+    """All signed permutations of a family, as unit vectors (unique)."""
+    vecs = set()
+    for p in itertools.permutations(hkl):
+        for s in itertools.product((1, -1), repeat=3):
+            vecs.add(tuple(int(a * b) for a, b in zip(p, s)))
+    arr = np.array(sorted(vecs), dtype=float)
+    return arr / np.linalg.norm(arr, axis=1)[:, None], sorted(vecs)
+
+
+def parse_matrix(text):
+    """'1 0 0; 0 1 0; 0 0 1' (rows) -> 3x3 float array."""
+    if text is None:
+        return np.eye(3)
+    if not isinstance(text, str):
+        m = np.asarray(text, dtype=float)
+    else:
+        rows = [r for r in re.split(r"[;\n]", text) if r.strip()]
+        m = np.array(
+            [[float(v) for v in re.split(r"[\s,]+", r.strip())] for r in rows]
+        )
+    if m.shape != (3, 3):
+        raise ValueError("Orientation matrix must be 3x3.")
+    return m
+
+
+def classify_normals(normals_lab, families, orientation=None, tol_deg=10.0):
+    """Assign each normal to the closest facet family.
+
+    Parameters
+    ----------
+    normals_lab : (N, 3) unit normals in the physical (x, y, z) frame.
+    families : output of :func:`parse_families`.
+    orientation : 3x3 matrix ``U`` with ``n_crystal = U @ n_lab`` (identity
+        when the volume axes are the crystal axes).
+    tol_deg : maximum angle to the family direction; beyond it -> -1 ("other").
+
+    Returns ``(family_id, plane_label, angle_deg)``.
+    """
+    U = (
+        np.eye(3)
+        if orientation is None
+        else np.asarray(orientation, dtype=float)
+    )
+    n = np.asarray(normals_lab, dtype=float) @ U.T
+    n /= np.maximum(np.linalg.norm(n, axis=1), 1e-30)[:, None]
+    best_cos = np.full(len(n), -2.0)
+    fam = np.full(len(n), -1, dtype=int)
+    plane = np.empty(len(n), dtype=object)
+    for f, (_lab, hkl) in enumerate(families):
+        vecs, ints = family_vectors(hkl)
+        dots = n @ vecs.T
+        j = np.argmax(dots, axis=1)
+        c = dots[np.arange(len(n)), j]
+        better = c > best_cos
+        best_cos[better] = c[better]
+        fam[better] = f
+        lbl = np.array(
+            [
+                "(" + "".join(str(v) for v in ints[k]) + ")"
+                for k in range(len(ints))
+            ],
+            dtype=object,
+        )
+        plane[better] = lbl[j[better]]
+    ang = np.degrees(np.arccos(np.clip(best_cos, -1, 1)))
+    fam[ang > float(tol_deg)] = -1
+    plane[fam < 0] = "other"
+    return fam, plane, ang
+
+
+def facet_colorscale(n_families):
+    """Discrete colorscale for ids 0..n-1 plus 'other' (=n)."""
+    k = n_families + 1
+    cols = [FACET_COLORS[i % len(FACET_COLORS)] for i in range(n_families)] + [
+        OTHER_COLOR
+    ]
+    cs = []
+    for i, c in enumerate(cols):
+        cs += [[i / k, c], [(i + 1) / k, c]]
+    return cs, k
+
+
+def facet_table(fam, areas, labels, values=None):
+    """Area-weighted statistics per family (``values`` sampled per face)."""
+    rows, total = [], float(np.sum(areas)) or 1.0
+    for f, lab in list(enumerate(labels)) + [(-1, "other")]:
+        m = fam == f
+        if not m.any():
+            continue
+        a = areas[m]
+        row = {
+            "family": lab,
+            "faces": int(m.sum()),
+            "area_frac": float(a.sum() / total),
+        }
+        if values is not None:
+            v = values[m]
+            ok = np.isfinite(v)
+            if ok.any():
+                w = a[ok] / a[ok].sum()
+                mu = float(np.sum(w * v[ok]))
+                row.update(
+                    mean=mu, std=float(np.sqrt(np.sum(w * (v[ok] - mu) ** 2)))
+                )
+        rows.append(row)
+    return rows
+
+
+# =============================================================================
+# Line profiles
+# =============================================================================
+def line_points(p0, p1, n=200):
+    p0, p1 = np.asarray(p0, float).reshape(3), np.asarray(p1, float).reshape(3)
+    t = np.linspace(0.0, 1.0, int(n))
+    pts = p0 + t[:, None] * (p1 - p0)
+    return pts, t * float(np.linalg.norm(p1 - p0))
+
+
+# =============================================================================
+# Surface shell / core regions
+# =============================================================================
+def shell_core_masks(support, voxel_zyx, depth):
+    """Split a boolean support into a surface shell (distance <= depth) and a core."""
+    support = np.asarray(support, dtype=bool)
+    dist = distance_transform_edt(
+        support, sampling=tuple(float(v) for v in voxel_zyx)
+    )
+    shell = support & (dist <= float(depth))
+    return shell, support & ~shell, dist
+
+
+def masked_stats(field, mask):
+    v = np.asarray(field, dtype=float)[np.asarray(mask, dtype=bool)]
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return {"n": 0}
+    p5, p50, p95 = np.percentile(v, [5, 50, 95])
+    return {
+        "n": int(v.size),
+        "mean": float(v.mean()),
+        "std": float(v.std()),
+        "median": float(p50),
+        "p5": float(p5),
+        "p95": float(p95),
+    }
+
+
+# =============================================================================
+# Mesh writers (STL / PLY / OBJ / legacy VTK); no extra dependency
+# =============================================================================
+def write_mesh(path, verts, faces, scalars=None, scalar_name="scalar"):
+    """Write a triangle mesh. Format from the suffix: .stl, .ply, .obj, .vtk."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    v = np.asarray(verts, dtype=np.float32)
+    f = np.asarray(faces, dtype=np.int64)
+    s = (
+        None
+        if scalars is None
+        else np.nan_to_num(np.asarray(scalars, dtype=np.float32))
+    )
+    ext = path.suffix.lower()
+    if ext == ".stl":
+        a, b, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
+        n = np.cross(b - a, c - a)
+        n /= np.maximum(np.linalg.norm(n, axis=1), 1e-30)[:, None]
+        rec = np.zeros(
+            len(f),
+            dtype=[
+                ("n", "<f4", 3),
+                ("a", "<f4", 3),
+                ("b", "<f4", 3),
+                ("c", "<f4", 3),
+                ("attr", "<u2"),
+            ],
+        )
+        rec["n"], rec["a"], rec["b"], rec["c"] = n, a, b, c
+        with open(path, "wb") as fh:
+            fh.write(b"MultiVolumeViewer".ljust(80, b" "))
+            fh.write(struct.pack("<I", len(f)))
+            fh.write(rec.tobytes())
+    elif ext == ".ply":
+        per_vertex = s is not None and s.size == len(v)
+        hdr = [
+            "ply",
+            "format binary_little_endian 1.0",
+            f"element vertex {len(v)}",
+            "property float x",
+            "property float y",
+            "property float z",
+        ]
+        if per_vertex:
+            hdr.append(f"property float {scalar_name}")
+        hdr += [
+            f"element face {len(f)}",
+            "property list uchar int vertex_indices",
+            "end_header",
+        ]
+        with open(path, "wb") as fh:
+            fh.write(("\n".join(hdr) + "\n").encode())
+            vv = np.column_stack([v, s]) if per_vertex else v
+            fh.write(vv.astype("<f4").tobytes())
+            ff = np.zeros(len(f), dtype=[("k", "u1"), ("i", "<i4", 3)])
+            ff["k"], ff["i"] = 3, f
+            fh.write(ff.tobytes())
+    elif ext == ".obj":
+        with open(path, "w") as fh:
+            fh.write("# MultiVolumeViewer\n")
+            np.savetxt(fh, v, fmt="v %.6g %.6g %.6g")
+            np.savetxt(fh, f + 1, fmt="f %d %d %d")
+    elif ext == ".vtk":
+        with open(path, "w") as fh:
+            fh.write(
+                "# vtk DataFile Version 3.0\nMultiVolumeViewer\nASCII\nDATASET POLYDATA\n"
+            )
+            fh.write(f"POINTS {len(v)} float\n")
+            np.savetxt(fh, v, fmt="%.6g")
+            fh.write(f"POLYGONS {len(f)} {4 * len(f)}\n")
+            np.savetxt(fh, np.column_stack([np.full(len(f), 3), f]), fmt="%d")
+            if s is not None and s.size in (len(v), len(f)):
+                kind = "POINT_DATA" if s.size == len(v) else "CELL_DATA"
+                fh.write(
+                    f"{kind} {s.size}\nSCALARS {scalar_name} float 1\nLOOKUP_TABLE default\n"
+                )
+                np.savetxt(fh, s, fmt="%.6g")
+    else:
+        raise ValueError(
+            f"Unsupported mesh format {ext!r}; use .stl, .ply, .obj or .vtk"
+        )
+    return path

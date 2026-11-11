@@ -3,6 +3,38 @@ Changelog
 
 This document tracks all notable changes to CDIutils.
 
+Unreleased
+----------
+
+**MultiVolumeViewer refactor** (``cdiutils.interactive.multiviewer_3d``):
+
+* Split into the ``cdiutils.interactive.multiviewer`` subpackage
+  (``geometry``, ``analysis``, ``rendering``, ``export``, ``ui``, ``tools``,
+  ``anim``, ``actions``, ``help``); ``multiviewer_3d`` keeps the class, and
+  the import path, the constructor and ``Plotter(..., plot="layers")`` are
+  unchanged.
+* One trace builder for the live view, animation exports and mesh files:
+  exports keep layer transforms, clip geometry and colour ranges; exports no
+  longer modify the live layers.
+* Geometry caching and in-place trace updates; derived layers reference
+  volumes instead of copying them.
+* Rendering backend tested lazily on first export; ``imageio-ffmpeg`` only
+  needed for MP4; ``rendering_mode`` respected by every export; VTK >= 9.2
+  compatibility.
+* New: several conditions with a slider, difference and surface-shell/core
+  layers, smooth planar clip caps, facet-family colouring and statistics,
+  probe clicks and line profiles, orthoslices, dislocation lines, arrows,
+  crystal-axes triad and scale bar, linked cameras, mesh export
+  (STL/PLY/OBJ/VTK), JSON save/load of the view, iso-level and layer-normal
+  animations, PNG-frame export.
+* ``MultiVolumeViewer`` is exported from ``cdiutils.interactive``.
+* Scripted actions: short step format (``{"show": "phase"}``), whole-script
+  check with suggestions before running, idempotent layer creation, style keys
+  on create, camera presets, chained exports, live report, YAML/JSON scripts,
+  ``script()`` builder, ``to_actions()`` / ``save_actions()``; former action
+  names still work.
+* Built-in ``help(topic)`` and a guided ``tutorial()`` on the user's data.
+
 Version 0.2.0 (Current)
 ------------------------
 
