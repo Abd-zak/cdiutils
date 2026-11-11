@@ -167,6 +167,9 @@ class HelpMixin:
             "<p>Open cdiutils results directly: <code>MultiVolumeViewer.from_cdiutils('results/S123')</code> "
             "(a list of scans gives conditions), or pick them in a form: "
             "<code>MultiVolumeViewer.launcher('results')</code>.</p>"
+            "<p>Panel edits are computed in the background: the view keeps responding and shows "
+            "<i>updating…</i> until the new geometry is ready. <code>v.cache_info()</code> shows the memory "
+            "used by cached isosurfaces and slices.</p>"
             "<p>Everything you can click can also be scripted, which makes a figure reproducible:</p>"
             + _code(code)
             + "<p>Tweak a view by hand, then turn it into a script with <code>v.save_actions('my_view.yaml')</code>; "

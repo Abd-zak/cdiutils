@@ -48,6 +48,7 @@ Physical coordinates start at the centre of voxel ``(0, 0, 0)``.
 import asyncio
 import contextlib
 import json
+import threading
 import warnings
 from collections import OrderedDict
 from pathlib import Path
@@ -131,20 +132,60 @@ GEOMETRY_BY_TYPE = {
 COORD_SEL = {"__x__": 0, "__y__": 1, "__z__": 2}
 
 
+def _nbytes(obj, _depth=0):
+    """Approximate memory of cached values (arrays, tuples, dicts)."""
+    if isinstance(obj, np.ndarray):
+        return obj.nbytes
+    if _depth < 3 and isinstance(obj, (tuple, list)):
+        return sum(_nbytes(o, _depth + 1) for o in obj)
+    if _depth < 3 and isinstance(obj, dict):
+        return sum(_nbytes(o, _depth + 1) for o in obj.values())
+    return 64
+
+
 class _LRU(OrderedDict):
-    def __init__(self, maxsize=24):
+    """Least-recently-used cache bounded by entries and, optionally, bytes.
+
+    Thread-safe enough for one background worker filling it while the
+    notebook thread reads it.
+    """
+
+    def __init__(self, maxsize=24, max_bytes=None):
         super().__init__()
         self.maxsize = maxsize
+        self.max_bytes = max_bytes
+        self.nbytes = 0
+        self._sizes = {}
+        self._lock = threading.RLock()
 
     def get_or(self, key, builder):
-        if key in self:
-            self.move_to_end(key)
-            return self[key]
-        val = builder()
-        self[key] = val
-        while len(self) > self.maxsize:
-            self.popitem(last=False)
+        with self._lock:
+            if key in self:
+                self.move_to_end(key)
+                return self[key]
+        val = builder()  # outside the lock: may be slow
+        with self._lock:
+            if key in self:  # built meanwhile by the other thread
+                return self[key]
+            self[key] = val
+            size = _nbytes(val)
+            self._sizes[key] = size
+            self.nbytes += size
+            while len(self) > 1 and (
+                len(self) > self.maxsize
+                or (
+                    self.max_bytes is not None and self.nbytes > self.max_bytes
+                )
+            ):
+                old, _ = self.popitem(last=False)
+                self.nbytes -= self._sizes.pop(old, 0)
         return val
+
+    def clear(self):
+        with self._lock:
+            super().clear()
+            self._sizes.clear()
+            self.nbytes = 0
 
 
 class MultiVolumeViewer(
@@ -172,6 +213,12 @@ class MultiVolumeViewer(
         ``unit`` is a label (``"rad"``) or ``(label, scale)`` to display the
         values multiplied by ``scale`` (``("%", 100)`` for a strain).
         Fields whose name contains ``"phase"`` default to ``"rad"``.
+    cache_mb : memory for cached isosurfaces and slices (MB); the least
+        recently used are dropped first. ``viewer.cache_info()`` shows the
+        use, ``viewer.clear_caches()`` frees it.
+    background : in a notebook, panel edits are computed in a worker thread
+        (the view keeps responding; rapid changes are merged) and applied
+        when ready. Scripts and API calls stay synchronous.
     """
 
     def __init__(
@@ -196,6 +243,8 @@ class MultiVolumeViewer(
         iso_step: int = 1,
         default_cmaps: dict | None = None,
         field_units: dict | None = None,
+        cache_mb: float = 2048,
+        background: bool = True,
     ):
         super().__init__()
         if PLOT_ORDER not in ("xyz", "zyx"):
@@ -258,7 +307,12 @@ class MultiVolumeViewer(
         self._vol_cache, self._interp_cache = {}, {}
         self._cond_caches = {}  # condition -> (volume, interpolator) caches
         self._range_all_cache = _LRU(64)
-        self._geom_cache, self._surf_cache = _LRU(32), _LRU(64)
+        mb = max(16.0, float(cache_mb))
+        self._geom_cache = _LRU(256, int(mb * 0.75 * 2**20))
+        self._surf_cache = _LRU(512, int(mb * 0.25 * 2**20))
+        self.background = bool(background)
+        self._pending_refresh = set()  # names, or {None} for everything
+        self._refresh_task = None
         self._trace_order, self._trace_cbar = [], {}
         self._batch, self._dirty = False, False
         self._export_task, self._anim_cancel = None, False
@@ -617,7 +671,7 @@ class MultiVolumeViewer(
         self._ui_after_data()
         self._rebuild()
 
-    def set_condition(self, index: int):
+    def set_condition(self, index: int, refresh: bool = True):
         """Show condition ``index`` (all layers and settings are kept)."""
         index = int(index)
         if not 0 <= index < len(self._conditions):
@@ -631,7 +685,8 @@ class MultiVolumeViewer(
         self._vol_cache, self._interp_cache = self._caches_of(index)
         self._update_condition_ui()
         self._tools_after_data()
-        self._rebuild()
+        if refresh:
+            self._rebuild()
 
     def _bump_data(self):
         self._data_version += 1
@@ -1461,6 +1516,114 @@ class MultiVolumeViewer(
             d.pop("type", None)
             with self.fig.batch_update():
                 self.fig.data[vis.index(n)].update(d)
+
+    # --- background refresh (panel edits in a notebook) -----------------------
+    REFRESH_DEBOUNCE = 0.12  # s: rapid edits within this delay are merged
+
+    def _ui_refresh(self, names=None):
+        """Refresh after a panel edit.
+
+        In a running event loop (notebook) the heavy part (isosurfaces,
+        slices, volumes) is computed in a worker thread while the kernel
+        keeps responding; edits arriving meanwhile are merged and the view
+        is updated once. Otherwise (scripts, tests, batches) the refresh is
+        immediate.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None or not self.background or self._batch:
+            return self._refresh(names)
+        if names is None:
+            self._pending_refresh.add(None)
+        else:
+            self._pending_refresh.update(names)
+        self._set_busy(True)
+        t = self._refresh_task
+        if t is None or t.done():
+            self._refresh_task = loop.create_task(self._refresh_worker())
+            self._refresh_task.add_done_callback(
+                lambda t: t.cancelled() or t.exception()
+            )
+        return self._refresh_task
+
+    async def _refresh_worker(self):
+        try:
+            while self._pending_refresh:
+                await asyncio.sleep(self.REFRESH_DEBOUNCE)
+                pending, self._pending_refresh = self._pending_refresh, set()
+                names = None if None in pending else sorted(pending)
+                self._set_busy(True)
+                await asyncio.to_thread(self._warm, names)
+                if self._pending_refresh:  # newer edits: compute those first
+                    self._pending_refresh |= pending
+                    continue
+                if names is None:
+                    self._rebuild()
+                else:
+                    self._refresh(names)
+        except Exception as e:  # shown, not lost in an unawaited task
+            self._pending_refresh.clear()
+            lab = getattr(self, "busy_label", None)
+            if lab is not None:
+                lab.value = (
+                    f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+                )
+            raise
+        else:
+            self._set_busy(False)
+
+    def _warm(self, names=None):
+        """Compute and cache the geometry of visible layers (worker thread).
+
+        Read-only on the viewer state; errors are left to the refresh that
+        follows on the notebook thread.
+        """
+        vis = self._visible_names()
+        for n in vis if names is None else [n for n in names if n in vis]:
+            try:
+                st = dict(self._style(n), range_all=False)
+                self._build_trace(n, style=st, sync=False)
+            except Exception:
+                pass
+
+    def _set_busy(self, on):
+        lab = getattr(self, "busy_label", None)
+        if lab is not None:
+            lab.value = (
+                "<span style='color:#888'>⏳ updating…</span>" if on else ""
+            )
+
+    async def wait_for_refresh(self):
+        """Wait until panel edits computed in the background are shown."""
+        while self._refresh_task is not None and not self._refresh_task.done():
+            await self._refresh_task
+
+    def cache_info(self) -> dict:
+        """Memory used by the caches (MB) and number of entries."""
+        mb = 2.0**-20
+        vols = sum(  # raw volumes are references to the input, not counted
+            _nbytes(v[1])
+            for vc, _ in self._cond_caches.values()
+            for k, v in vc.items()
+            if (self._layers.get(k) or {}).get("type") != "raw"
+        )
+        return {
+            "isosurfaces_MB": round(self._geom_cache.nbytes * mb, 1),
+            "isosurfaces": len(self._geom_cache),
+            "slices_MB": round(self._surf_cache.nbytes * mb, 1),
+            "slices": len(self._surf_cache),
+            "derived_volumes_MB": round(vols * mb, 1),
+            "limit_MB": round(
+                (self._geom_cache.max_bytes + self._surf_cache.max_bytes) * mb
+            ),
+        }
+
+    def clear_caches(self):
+        """Free cached geometry and derived volumes (recomputed on demand)."""
+        self._bump_data()
+        self._rebuild()
 
     def _rebuild(self):
         if self._batch:

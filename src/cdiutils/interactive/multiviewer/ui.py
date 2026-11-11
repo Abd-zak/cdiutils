@@ -265,8 +265,17 @@ class UIMixin:
         )
         self.right_panel.add_class("mv-panel")
         self.anim_panel.add_class("mv-panel")
+        self.busy_label = widgets.HTML(
+            "", layout=widgets.Layout(height="18px", margin="0 0 0 8px")
+        )
         left = widgets.VBox(
-            [widgets.HTML(CSS), self.fig, self.ortho_box, self.anim_panel],
+            [
+                widgets.HTML(CSS),
+                self.busy_label,
+                self.fig,
+                self.ortho_box,
+                self.anim_panel,
+            ],
             layout=widgets.Layout(
                 flex="1 1 0%", min_width="0px", padding="6px"
             ),
@@ -367,7 +376,10 @@ class UIMixin:
         )
         self.cond_slider.observe(
             lambda ch: (
-                self.set_condition(ch["new"])
+                (
+                    self.set_condition(ch["new"], refresh=False),
+                    self._ui_refresh(None),
+                )
                 if ch["new"] != self._cond_index
                 else None
             ),
@@ -531,7 +543,7 @@ class UIMixin:
             indent=False,
             layout=widgets.Layout(width="150px"),
         )
-        cb.observe(lambda ch: self._rebuild(), names="value")
+        cb.observe(lambda ch: self._ui_refresh(None), names="value")
         self._visible_cb[name] = cb
 
     def _get_visible_keys(self):
@@ -1128,9 +1140,9 @@ class UIMixin:
             self._vol_cache.pop(name, None)
             if "thr" in w:
                 self._set_thr_bounds(name, keep_value=True)
-            self._refresh(None)
+            self._ui_refresh(None)
         else:
-            self._refresh([name])
+            self._ui_refresh([name])
 
     # --- style --------------------------------------------------------------------
     def _style(self, name):
@@ -1249,7 +1261,47 @@ class UIMixin:
                     opacity=float(st["op"]), lighting=self._lighting(st)
                 )
                 return
-        self._refresh([name])
+        if self._restyle(name, owner):
+            return
+        self._ui_refresh([name])
+
+    _RESTYLE_KEYS = ("cmap", "range_slider", "range_mode")
+
+    def _restyle(self, name, owner):
+        """Colour-only change (colormap, colour range): update the trace in
+        place from its current values, without recomputing or resending the
+        geometry. Returns False when a full refresh is needed."""
+        w = self._layer_widgets.get(name, {})
+        if (
+            self._batch
+            or name not in self._trace_order
+            or not any(owner is w.get(k) for k in self._RESTYLE_KEYS)
+        ):
+            return False
+        st = self._style(name)
+        if (
+            st["color_by"] in ("__facet__", "__constant__")
+            or st.get("range_all")
+            or self._wants_cbar(st) != bool(self._trace_cbar.get(name))
+        ):
+            return False
+        tr = self.fig.data[self._trace_order.index(name)]
+        vals = getattr(tr, "intensity", None)
+        if vals is None:
+            vals = getattr(tr, "surfacecolor", None)
+        if vals is None or tr.cmin is None:
+            return False
+        vals = np.asarray(vals, dtype=float)
+        if not vals.size:
+            return False
+        cmin, cmax = self._color_range(
+            name, self._layers[name], st, vals, sync=True
+        )
+        with self.fig.batch_update():
+            tr.update(
+                colorscale=self._colorscale(st["cmap"]), cmin=cmin, cmax=cmax
+            )
+        return True
 
     def _sync_range_widget(self, w, dmin, dmax, auto, value=None):
         rs = w["range_slider"]
@@ -1331,7 +1383,7 @@ class UIMixin:
         if w is None or w.get("_mute"):
             return
         self._read_transform(name)
-        self._refresh([name])
+        self._ui_refresh([name])
 
     # =========================================================================
     # Layer panel

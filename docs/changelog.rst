@@ -82,6 +82,15 @@ Unreleased
   layers.
 * Shell/core panel: "automatic" is now 0 instead of NaN (NaN values broke
   the widget messages to the browser).
+* Responsiveness: in a notebook, panel edits (iso level, slice position,
+  clip offset, transforms, visibility, condition slider) are computed in a
+  worker thread; rapid edits are merged and the view is updated once
+  ("updating…" shown meanwhile; ``await viewer.wait_for_refresh()``).
+  Scripts and API calls stay synchronous (``background=False`` disables).
+  Colormap and colour-range changes update the trace in place without
+  recomputing or resending the geometry. Caches of isosurfaces and slices
+  are bounded in memory (``cache_mb=2048``; ``cache_info()``,
+  ``clear_caches()``).
 * ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
   labels, voxel size, units, options, start script) that opens the viewer
   in its place, with *Show configuration* and *Back*.
