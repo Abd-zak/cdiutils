@@ -13,7 +13,8 @@ MultiVolumeViewer (multi-layer 3D viewer)
       export_mesh, layer_mesh, get_view_state, set_view_state, save_state,
       load_state, run_actions, run_actions_async, validate_actions,
       wait_for_script, script, to_actions, save_actions, help, tutorial,
-      write_image, export_html, fit_aspect, cache_info, clear_caches,
+      write_image, export_html, fit_aspect, set_figure_preset, cache_info,
+      clear_caches,
       wait_for_refresh,
       start_rotation_export, start_layer_export, start_condition_export,
       wait_for_export, show

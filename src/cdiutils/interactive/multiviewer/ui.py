@@ -46,11 +46,49 @@ CSS = """
 .mv-root.mv-dark .mv-panel button:hover { background: #223046 !important; }
 .mv-root.mv-dark .mv-panel button.mod-active { background: #2a3a55 !important; }
 .mv-root.mv-dark .mv-panel table td, .mv-root.mv-dark .mv-panel table th { border-color: #2f3b4d; }
+.mv-panel { background: var(--jp-layout-color0, transparent); }
+.mv-toolbar { gap: 4px; padding: 4px 6px; border: 1px solid rgba(127,127,127,0.35); border-radius: 6px;
+  margin-bottom: 6px; align-items: center; }
+.mv-toolbar .widget-inline-hbox { margin: 0; }
+.mv-status { font-size: 12px; opacity: 0.8; gap: 14px; padding: 2px 8px;
+  border-top: 1px solid rgba(127,127,127,0.25); }
+.mv-row { border-bottom: 1px solid rgba(127,127,127,0.15); align-items: center; }
+.mv-row-sel { background: rgba(47,111,219,0.12); }
+.mv-row button { text-align: left; }
+.mv-tile button { height: 52px; }
+.mv-root.mv-dark .mv-toolbar, .mv-root.mv-dark .mv-status { background: #0b1f3a; color: #e6eefc; }
+.mv-root.mv-dark .mv-toolbar *, .mv-root.mv-dark .mv-status * { color: #e6eefc; }
+.mv-root.mv-dark .mv-toolbar button, .mv-root.mv-dark .mv-toolbar select {
+  background: #1b2431 !important; border: 1px solid #2f3b4d !important; }
+.mv-root.mv-dark .mv-panel .widget-tab-contents, .mv-root.mv-dark .mv-panel .lm-TabBar,
+.mv-root.mv-dark .mv-panel .lm-TabBar-tab, .mv-root.mv-dark .mv-panel .p-TabBar-tab {
+  background: #0b1f3a !important; color: #e6eefc !important; border-color: #2f3b4d !important; }
+.mv-root.mv-dark .mv-panel .lm-TabBar-tab.lm-mod-current { background: #13294b !important; }
 .mv-table { border-collapse: collapse; font-size: 12px; }
 .mv-table td, .mv-table th { border: 1px solid rgba(127,127,127,0.4); padding: 2px 6px; text-align: right; }
 .mv-table th:first-child, .mv-table td:first-child { text-align: left; }
 </style>
 """
+
+
+TAB_TITLES = ("Layers", "Add", "Analyze", "Export", "Script", "Help")
+
+#: Export size presets: (width, height, scale). Tunable per viewer with
+#: ``figure_presets=`` or :meth:`set_figure_preset`.
+FIGURE_PRESETS = {
+    "screen": None,  # the viewer's export size
+    "paper": (1200, 900, 2),
+    "slide": (1600, 900, 1),
+    "poster": (2400, 1800, 1),
+}
+
+
+def _gradient(colorscale, n=8):
+    cs = list(colorscale)
+    if len(cs) > n:  # a few stops are enough for a 40-px swatch
+        cs = [cs[round(i * (len(cs) - 1) / (n - 1))] for i in range(n)]
+    stops = ", ".join(f"{c} {100 * float(p):.0f}%" for p, c in cs)
+    return f"linear-gradient(90deg, {stops})"
 
 
 def _lay(width="95%", **kw):
@@ -79,15 +117,15 @@ class UIMixin:
         )
         self._build_figure()
 
-        self.visible_keys_box = widgets.Box(
+        self.visible_keys_box = widgets.VBox(
             [],
             layout=widgets.Layout(
-                display="flex",
-                flex_flow="row wrap",
-                width="95%",
-                grid_gap="4px 10px",
+                width="100%",
+                border="1px solid rgba(127,127,127,0.35)",
+                margin="4px 0 8px 0",
             ),
         )
+        self._rows = {}
         self.cond_slider = widgets.IntSlider(
             value=0,
             min=0,
@@ -226,66 +264,94 @@ class UIMixin:
         tool_sections = self._build_tools_ui()
         self._build_anim_ui()
 
-        panel = widgets.VBox(
+        help_sec, probe_sec, facet_sec, reg_sec, ortho_sec, state_sec = (
+            tool_sections
+        )
+        self.anim_panel.add_class("mv-panel")
+        self.toolbar = self._build_toolbar()
+        self.status_bar = self._build_status_bar()
+
+        # --- tabs of the side panel ---
+        self.edit_key.layout.display = "none"  # the layer list selects
+        self.rename_layer_text.layout.width = "50%"
+        self.rename_layer_btn.layout.width = "auto"
+        self.delete_layer_btn.layout.width = "auto"
+        self.delete_layer_btn.description = "Delete"
+        layers_tab = widgets.VBox(
             [
-                widgets.HTML("<b>Visible layers</b>"),
                 self.visible_keys_box,
                 widgets.HBox(
                     [
-                        self.theme_toggle,
-                        self.rotate_toggle,
-                        self.grid_toggle,
-                        self.reset_cam_btn,
+                        self.edit_key,
+                        self.rename_layer_text,
+                        self.rename_layer_btn,
+                        self.delete_layer_btn,
                     ],
-                    layout=_lay(flex_flow="row wrap", grid_gap="6px"),
-                ),
-                self.cond_row,
-                widgets.HTML("<b>Layer controls</b>"),
-                widgets.HBox(
-                    [self.edit_key, self.rename_layer_text], layout=_lay()
-                ),
-                widgets.HBox(
-                    [self.rename_layer_btn, self.delete_layer_btn],
-                    layout=_lay(),
+                    layout=_lay("100%", align_items="center"),
                 ),
                 self.layers_box,
-                self._section("Create layer", create_box, True),
-                *tool_sections,
             ],
-            layout=widgets.Layout(width="100%"),
+            layout=_lay("100%"),
         )
+        add_tab = widgets.VBox(
+            [self._build_add_tiles(), create_box], layout=_lay("100%")
+        )
+        analyze_tab = widgets.VBox(
+            [probe_sec, facet_sec, reg_sec, ortho_sec], layout=_lay("100%")
+        )
+        export_tab = widgets.VBox(
+            [self.anim_panel, state_sec], layout=_lay("100%")
+        )
+        script_tab = self._build_script_tab()
+        help_tab = widgets.VBox([help_sec], layout=_lay("100%"))
+        self.tabs = widgets.Tab(
+            [
+                layers_tab,
+                add_tab,
+                analyze_tab,
+                export_tab,
+                script_tab,
+                help_tab,
+            ],
+            layout=_lay("100%"),
+        )
+        for i, t in enumerate(TAB_TITLES):
+            self.tabs.set_title(i, t)
+        # sections inside tabs start open
+        for sec in (help_sec, probe_sec):
+            sec.children[0].value = True
+
         self.right_panel = widgets.VBox(
-            [panel],
+            [self.tabs],
             layout=widgets.Layout(
-                flex="0 0 38%",
-                padding="12px",
+                flex=f"0 0 {self.panel_width}",
+                width=self.panel_width,
+                padding="0",
                 overflow="auto",
                 max_height=f"{int(self.figsize[1] * 160)}px",
             ),
         )
         self.right_panel.add_class("mv-panel")
-        self.anim_panel.add_class("mv-panel")
-        self.busy_label = widgets.HTML(
-            "", layout=widgets.Layout(height="18px", margin="0 0 0 8px")
-        )
+        self.busy_label = widgets.HTML("", layout=widgets.Layout(width="auto"))
+        self.status_bar.children = (*self.status_bar.children, self.busy_label)
         left = widgets.VBox(
-            [
-                widgets.HTML(CSS),
-                self.busy_label,
-                self.fig,
-                self.ortho_box,
-                self.anim_panel,
-            ],
+            [self.fig, self.status_bar, self.ortho_box],
             layout=widgets.Layout(
-                flex="1 1 0%", min_width="0px", padding="6px"
+                flex="1 1 0%", min_width="0px", padding="0 6px"
             ),
         )
-        self.children = [left, self.right_panel]
+        side = [left, self.right_panel]
+        if self.panel_side == "left":
+            side = side[::-1]
+        self.body = widgets.HBox(
+            side,
+            layout=widgets.Layout(
+                width="100%", align_items="flex-start", grid_gap="10px"
+            ),
+        )
+        self.children = [widgets.HTML(CSS), self.toolbar, self.body]
         self.layout = widgets.Layout(
-            display="flex",
-            flex_flow="row",
-            align_items="flex-start",
-            width="100%",
+            display="flex", flex_flow="column", width="100%"
         )
         self.add_class("mv-root")
         self._wire_global_callbacks()
@@ -329,6 +395,394 @@ class UIMixin:
             "showexponent": "all",
             "exponentformat": "power",
         }
+
+    # =========================================================================
+    # Toolbar, status bar, layer list, Add tiles, Script tab
+    # =========================================================================
+    def _build_toolbar(self):
+        B = widgets.Button
+        self.reset_cam_btn.description = "⟲ Reset"
+        self.reset_cam_btn.tooltip = "Reset the camera"
+        self.view_btns = {}
+        for v in ("iso", "x", "y", "z"):
+            b = B(description=v, layout=_lay("auto"), tooltip=f"View {v}")
+            b.on_click(
+                lambda _b, v=v: self._act_camera(v, None, None, None, 1.0)
+            )
+            self.view_btns[v] = b
+        self.theme_toggle.description = "Dark"
+        self.rotate_toggle.description = "⟳ Rotate"
+        self.cond_slider.layout.width = "260px"
+        self.cond_slider.style = {"description_width": "65px"}
+        presets = list(self.figure_presets)
+        self.fig_preset = widgets.Dropdown(
+            options=presets,
+            value=self._figure_preset
+            if self._figure_preset in presets
+            else presets[0],
+            description="Figure",
+            style={"description_width": "45px"},
+            layout=_lay("150px"),
+            tooltip="Export size preset (width x height, scale)",
+        )
+        self.fig_preset.observe(
+            lambda ch: self.set_figure_preset(ch["new"]), names="value"
+        )
+        self.png_btn = B(
+            description="📷 PNG",
+            layout=_lay("auto"),
+            tooltip="Save the view as PNG ('Save as' name of the Export tab)",
+        )
+        self.png_btn.on_click(self._on_png_clicked)
+        self.html_btn = B(
+            description="⇩ HTML",
+            layout=_lay("auto"),
+            tooltip="Interactive HTML page of the view",
+        )
+        self.html_btn.on_click(self._on_save_html_clicked)
+        self.panel_toggle = widgets.ToggleButton(
+            value=True,
+            description="Panel",
+            icon="columns",
+            layout=_lay("auto"),
+            tooltip="Show / hide the side panel",
+        )
+        self.panel_toggle.observe(self._on_panel_toggle, names="value")
+        sep = widgets.HTML(
+            "<span style='opacity:0.3'>│</span>", layout=_lay("auto")
+        )
+        bar = widgets.HBox(
+            [
+                self.reset_cam_btn,
+                *self.view_btns.values(),
+                widgets.HTML(sep.value),
+                self.grid_toggle,
+                self.theme_toggle,
+                self.rotate_toggle,
+                widgets.HTML(sep.value),
+                self.cond_row,
+                self.fig_preset,
+                self.png_btn,
+                self.html_btn,
+                widgets.HBox([], layout=_lay("auto", flex="1 1 auto")),
+                self.panel_toggle,
+            ],
+            layout=_lay("100%", flex_flow="row wrap"),
+        )
+        bar.add_class("mv-toolbar")
+        self.cond_row.layout.width = "auto"
+        return bar
+
+    def _build_status_bar(self):
+        self.status_html = widgets.HTML("")
+        bar = widgets.HBox([self.status_html], layout=_lay("100%"))
+        bar.add_class("mv-status")
+        return bar
+
+    def _update_status(self):
+        if not hasattr(self, "status_html") or self.frame is None:
+            return
+        vis = self._visible_names()
+        vs = "×".join(f"{v:g}" for v in self.voxel_size)
+        parts = [
+            f"{len(self._layers)} layers · <b>{len(vis)} visible</b>",
+            f"voxel <b>{vs}</b> {self.unit or ''}",
+        ]
+        if len(self._conditions) > 1:
+            parts.append(
+                f"condition <b>{self._cond_labels[self._cond_index]}</b>"
+            )
+        try:
+            info = self.cache_info()
+            mb = info["isosurfaces_MB"] + info["slices_MB"]
+            parts.append(
+                f"cache <b>{mb:.1f} MB</b>"
+                if mb < 10
+                else f"cache <b>{mb:.0f} MB</b>"
+            )
+        except Exception:
+            pass
+        self.status_html.value = " &nbsp;·&nbsp; ".join(parts)
+
+    def _on_panel_toggle(self, ch):
+        self.right_panel.layout.display = "" if ch["new"] else "none"
+
+    def set_figure_preset(
+        self, name=None, width=None, height=None, scale=None
+    ):
+        """Export size for images and animations.
+
+        ``name``: a key of ``figure_presets`` (``screen``, ``paper``,
+        ``slide``, ``poster`` by default); ``width`` / ``height`` /
+        ``scale`` override it. Returns ``(width, height, scale)``.
+        """
+        if name is not None:
+            if name not in self.figure_presets:
+                raise ValueError(
+                    f"Unknown figure preset {name!r}; use one of "
+                    f"{list(self.figure_presets)}"
+                )
+            p = self.figure_presets[name]
+            w, h, sc = (
+                (self.export_width, self.export_height, 2) if p is None else p
+            )
+            self._figure_preset = name
+            if self.fig_preset.value != name:
+                self.fig_preset.value = name
+        else:
+            w, h, sc = (
+                self.anim_width.value,
+                self.anim_height.value,
+                self.anim_scale.value,
+            )
+        w, h, sc = (
+            int(width or w),
+            int(height or h),
+            int(scale or sc),
+        )
+        self.anim_width.value, self.anim_height.value = w, h
+        self.anim_scale.value = max(1, min(4, sc))
+        return w, h, self.anim_scale.value
+
+    def _on_png_clicked(self, _b=None):
+        from .export import output_path
+
+        try:
+            out = output_path(self.anim_name.value, "png", "view").with_suffix(
+                ".png"
+            )
+            if out.name == ".png":
+                out = out.with_name("view.png")
+            self.write_image(
+                out,
+                self.anim_width.value,
+                self.anim_height.value,
+                self.anim_scale.value,
+            )
+            self.anim_status.value = f"Saved: <code>{out.resolve()}</code>"
+            self.busy_label.value = f"saved {out.name}"
+        except Exception as e:
+            self.busy_label.value = (
+                f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+            )
+
+    # --- layer list ---------------------------------------------------------
+    def _layer_row(self, name):
+        cb = self._visible_cb[name]
+        cb.description = ""
+        cb.layout.width = "28px"
+        t = self._layers[name]["type"]
+        btn = widgets.Button(
+            description=name,
+            tooltip=f"Edit {name}",
+            layout=_lay("auto", flex="1 1 auto"),
+        )
+        btn.on_click(lambda _b, n=name: self._select_edit_layer(n))
+        sw = widgets.HTML(self._swatch_html(name), layout=_lay("44px"))
+        badge = widgets.HTML(
+            f"<span style='font-size:11px;opacity:0.7;border:1px solid "
+            f"rgba(127,127,127,0.5);border-radius:9px;padding:0 6px'>{t}</span>",
+            layout=_lay("auto"),
+        )
+        row = widgets.HBox([cb, sw, btn, badge], layout=_lay("100%"))
+        row.add_class("mv-row")
+        self._rows[name] = (row, sw)
+        return row
+
+    def _swatch_html(self, name):
+        st = self._style(name) if name in self._layer_widgets else {}
+        cmap = st.get("cmap")
+        bg = (
+            _gradient(self._colorscale(cmap))
+            if cmap
+            else st.get("color", "#888")
+        )
+        return (
+            f"<div style='width:38px;height:12px;border-radius:3px;"
+            f"border:1px solid rgba(0,0,0,0.25);background:{bg}'></div>"
+        )
+
+    def _refresh_layer_list(self):
+        self._rows = {}
+        self.visible_keys_box.children = [
+            self._layer_row(k) for k in self._layers if k in self._visible_cb
+        ]
+        self._highlight_row(self.edit_key.value)
+
+    def _highlight_row(self, name):
+        for n, (row, _) in getattr(self, "_rows", {}).items():
+            (row.add_class if n == name else row.remove_class)("mv-row-sel")
+
+    def _update_swatch(self, name):
+        r = getattr(self, "_rows", {}).get(name)
+        if r is not None:
+            r[1].value = self._swatch_html(name)
+
+    # --- Add tiles ----------------------------------------------------------
+    def _build_add_tiles(self):
+        tiles = []
+        for label, kind in (
+            ("▤ Slice", "slice"),
+            ("◇ Plane", "plane"),
+            ("◐ Clip", "clip"),
+            ("Δ Difference", "difference"),
+            ("◎ Shell / core", "region"),
+            ("⊹ Crystal axes", "triad"),
+            ("━ Scale bar", "scale_bar"),
+            ("∿ Lines", "lines"),
+            ("➚ Arrows", "arrows"),
+        ):
+            b = widgets.Button(description=label, layout=_lay("auto"))
+            b.add_class("mv-tile")
+            b.on_click(lambda _b, k=kind: self._on_add_tile(k))
+            tiles.append(b)
+        self.add_tile_msg = widgets.HTML("")
+        grid = widgets.GridBox(
+            tiles,
+            layout=widgets.Layout(
+                grid_template_columns="repeat(3, 1fr)",
+                grid_gap="6px",
+                width="100%",
+            ),
+        )
+        return widgets.VBox([grid, self.add_tile_msg], layout=_lay("100%"))
+
+    def _on_add_tile(self, kind):
+        self.add_tile_msg.value = ""
+        if kind in ("slice", "plane", "clip", "difference", "region"):
+            self.add_layer_kind.value = kind
+            return
+        try:
+            if kind == "triad":
+                self._select_edit_layer(self.add_axes_triad())
+            elif kind == "scale_bar":
+                self._select_edit_layer(self.add_scale_bar())
+            else:
+                ex = (
+                    "v.add_lines('dislo', [points_a, points_b])"
+                    if kind == "lines"
+                    else "v.add_arrows('b', origins, vectors, labels=['b'])"
+                )
+                self.add_tile_msg.value = (
+                    f"<i>{kind.capitalize()} come from your data; in code:</i> "
+                    f"<code>{ex}</code> <i>(see</i> <code>v.help('{kind}')</code><i>)</i>"
+                )
+        except Exception as e:
+            self.add_tile_msg.value = (
+                f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+            )
+
+    # --- Script tab ---------------------------------------------------------
+    def _build_script_tab(self):
+        B = widgets.Button
+        self.script_text = widgets.Textarea(
+            value="",
+            placeholder="- {only: amplitude}\n- {edit: amplitude, thr: 0.3}",
+            layout=_lay("100%", height="340px"),
+        )
+        self.script_text.add_class("mv-script")
+        self.script_from_view = B(
+            description="⇦ From current view", layout=_lay("auto")
+        )
+        self.script_check = B(description="Check", layout=_lay("auto"))
+        self.script_run = B(
+            description="Run", button_style="primary", layout=_lay("auto")
+        )
+        self.script_path = widgets.Text(
+            value="view.yaml", placeholder="script.yaml", layout=_lay("40%")
+        )
+        self.script_open = B(description="Open", layout=_lay("auto"))
+        self.script_save = B(description="Save", layout=_lay("auto"))
+        self.script_msg = widgets.HTML("")
+        self.script_from_view.on_click(lambda _b: self._script_from_view())
+        self.script_check.on_click(lambda _b: self._script_check())
+        self.script_run.on_click(lambda _b: self._script_run())
+        self.script_open.on_click(lambda _b: self._script_io(save=False))
+        self.script_save.on_click(lambda _b: self._script_io(save=True))
+        return widgets.VBox(
+            [
+                widgets.HBox(
+                    [
+                        self.script_from_view,
+                        self.script_check,
+                        self.script_run,
+                    ],
+                    layout=_lay("100%"),
+                ),
+                self.script_text,
+                widgets.HBox(
+                    [self.script_path, self.script_open, self.script_save],
+                    layout=_lay("100%"),
+                ),
+                self.script_msg,
+            ],
+            layout=_lay("100%"),
+        )
+
+    def _script_steps(self):
+        import yaml
+
+        steps = yaml.safe_load(self.script_text.value or "") or []
+        return steps if isinstance(steps, list) else [steps]
+
+    def _script_from_view(self):
+        import yaml
+
+        self.script_text.value = yaml.safe_dump(
+            self.to_actions(),
+            sort_keys=False,
+            default_flow_style=None,
+            allow_unicode=True,
+        )
+        self.script_msg.value = "<i>The current view as a script.</i>"
+
+    def _script_check(self):
+        try:
+            steps = self._script_steps()
+            problems = self.validate_actions(steps)
+        except Exception as e:
+            problems = [f"{type(e).__name__}: {e}"]
+            steps = []
+        self.script_msg.value = (
+            "<br>".join(
+                f"<span style='color:#d62728'>✗ {p}</span>" for p in problems
+            )
+            if problems
+            else f"✓ No problems found · {len(steps)} steps"
+        )
+        return not problems
+
+    def _script_run(self):
+        if not self._script_check():
+            return
+        try:
+            rep = self.run_actions(self._script_steps())
+            self.script_msg.value = (
+                f"✓ ran {len(rep)} steps"
+                if getattr(rep, "ok", True)
+                else "Running in the background (exports)…"
+            )
+        except Exception as e:
+            self.script_msg.value = (
+                f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+            )
+
+    def _script_io(self, save):
+        from pathlib import Path
+
+        try:
+            path = Path(self.script_path.value).expanduser()
+            if save:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(self.script_text.value)
+                self.script_msg.value = f"Saved <code>{path.resolve()}</code>"
+            else:
+                self.script_text.value = path.read_text()
+                self.script_msg.value = f"Opened <code>{path.resolve()}</code>"
+        except Exception as e:
+            self.script_msg.value = (
+                f"<b style='color:#d62728'>{type(e).__name__}: {e}</b>"
+            )
 
     def _section(self, title, body, open_by_default=False):
         header = widgets.ToggleButton(
@@ -454,9 +908,6 @@ class UIMixin:
     def _after_layers_changed(self, select=None):
         """Re-sync every widget that lists layers (keeps current values when still valid)."""
         names = list(self._layers)
-        self.visible_keys_box.children = [
-            self._visible_cb[k] for k in names if k in self._visible_cb
-        ]
         prev = self.edit_key.value
         self.edit_key.unobserve(self._on_edit_key_changed, names="value")
         try:
@@ -481,6 +932,7 @@ class UIMixin:
         self._anim_refresh_options()
         if target is not None:
             self.rename_layer_text.value = target
+        self._refresh_layer_list()
         self._show_layer_panel(self.edit_key.value)
 
     @staticmethod
@@ -1234,6 +1686,8 @@ class UIMixin:
                     o[1] for o in w["color_by"].options
                 ]:
                     raise ValueError(f"Cannot colour '{name}' by {v!r}")
+                if k == "color_by" and v != w["color_by"].value:
+                    w["_reset_bounds"] = True  # new field: new slider bounds
                 w[k].value = v
             if "range_mode" in w:
                 w["range_slider"].disabled = w["range_mode"].value != "manual"
@@ -1261,6 +1715,8 @@ class UIMixin:
                     opacity=float(st["op"]), lighting=self._lighting(st)
                 )
                 return
+        if owner is w.get("cmap") or owner is w.get("color"):
+            self._update_swatch(name)
         if self._restyle(name, owner):
             return
         self._ui_refresh([name])
@@ -1526,6 +1982,7 @@ class UIMixin:
         if new and (not cur.strip() or cur == old):
             self.rename_layer_text.value = new
         self._show_layer_panel(new)
+        self._highlight_row(new)
 
     def _on_rename_clicked(self, _b):
         old, new = (

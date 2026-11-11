@@ -160,13 +160,14 @@ class HelpMixin:
         )
         return (
             "<h3>MultiVolumeViewer</h3>"
-            "<p>Interactive 3D viewer for several volumes on the same grid. <b>Left</b>: the 3D view "
-            "(drag to rotate, scroll to zoom) and the animation export panel. <b>Right</b>: visible layers, "
-            "theme/rotation/grid, the editor of the selected layer, <i>Create layer</i>, and the tool sections "
-            "(probe, facets, shell/core statistics, orthoslices, save/load).</p>"
-            "<p>Open cdiutils results directly: <code>MultiVolumeViewer.from_cdiutils('results/S123')</code> "
-            "(a list of scans gives conditions), or pick them in a form: "
-            "<code>MultiVolumeViewer.launcher('results')</code>.</p>"
+            "<p>Interactive 3D viewer for several volumes on the same grid. <b>Toolbar</b>: camera "
+            "(reset, iso/x/y/z), grid, dark theme, rotation, condition slider, figure size preset, quick PNG "
+            "and HTML, and a button to hide the panel. <b>3D view</b> (drag to rotate, scroll to zoom) with a "
+            "status bar. <b>Panel tabs</b>: <i>Layers</i> (list: tick to show, click a name to edit), "
+            "<i>Add</i> (new slices, planes, clips, differences, shell/core, crystal axes, scale bar), "
+            "<i>Analyze</i> (probe, profiles, facets, shell/core statistics, orthoslices), <i>Export</i> "
+            "(images, animations, HTML, save/load view), <i>Script</i> (the view as a script; check, run, "
+            "save) and <i>Help</i>.</p>"
             "<p>Panel edits are computed in the background: the view keeps responding and shows "
             "<i>updating…</i> until the new geometry is ready. <code>v.cache_info()</code> shows the memory "
             "used by cached isosurfaces and slices.</p>"
@@ -329,7 +330,7 @@ class HelpMixin:
         return (
             "<h3>Layer types</h3>"
             + _table(rows, ["type", "what it is"])
-            + "<p>Each layer has its own style, lighting, transform and mesh export in the layer panel.</p>"
+            + "<p>Each layer has its own style, lighting, transform and mesh export in the Layers tab.</p>"
         )
 
     def _help_coordinates(self):
@@ -546,7 +547,7 @@ class Tutorial(widgets.VBox):
             dict(
                 title="1. Show and style a volume",
                 text=f"Show only <b>{A}</b>, make it semi-transparent and colour its surface by <b>{F}</b>. "
-                "The same can be done in the layer panel (Edit → opacity, color by, cmap).",
+                "The same can be done in the Layers tab (click the layer name: opacity, color by, cmap).",
                 actions=[
                     {"only": A},
                     {"edit": A, "opacity": 0.6, "color_by": F, "cmap": cmapF},
@@ -591,7 +592,7 @@ class Tutorial(widgets.VBox):
             dict(
                 title="5. Probe and line profile",
                 text="Two probe points (centre and an off-centre point) and the profile of every volume between them. "
-                "In the panel: turn on <i>Probe clicks</i> and click on a surface.",
+                "In the Analyze tab: turn on <i>Probe clicks</i> and click on a surface.",
                 actions=None,
                 extra=self._probe,
                 extra_code="v.probe(point)  # plot coordinates\n"

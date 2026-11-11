@@ -91,6 +91,14 @@ Unreleased
   recomputing or resending the geometry. Caches of isosurfaces and slices
   are bounded in memory (``cache_mb=2048``; ``cache_info()``,
   ``clear_caches()``).
+* New layout: toolbar (camera views, grid, theme, rotation, condition
+  slider, figure size preset, quick PNG / HTML, hide panel), status bar,
+  and a tabbed panel: *Layers* (list with visibility, colormap swatch and
+  type; click to edit), *Add* (tiles), *Analyze*, *Export*, *Script* (the
+  view as an editable script: check, run, open, save) and *Help*.
+  ``panel_side`` / ``panel_width``; ``figure_preset`` / ``figure_presets``
+  and ``set_figure_preset()`` (screen, paper 1200x900, slide 1600x900,
+  poster 2400x1800). Panel colours follow the Jupyter theme.
 * ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
   labels, voxel size, units, options, start script) that opens the viewer
   in its place, with *Show configuration* and *Back*.

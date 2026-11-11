@@ -219,6 +219,12 @@ class MultiVolumeViewer(
     background : in a notebook, panel edits are computed in a worker thread
         (the view keeps responding; rapid changes are merged) and applied
         when ready. Scripts and API calls stay synchronous.
+    panel_side, panel_width : side (``"right"`` or ``"left"``) and width of
+        the tabbed panel; the toolbar's *Panel* button hides it.
+    figure_preset, figure_presets : export size preset (``"screen"``,
+        ``"paper"`` 1200x900, ``"slide"`` 1600x900, ``"poster"``
+        2400x1800) and extra or changed presets
+        ``{name: (width, height, scale)}``.
     """
 
     def __init__(
@@ -245,6 +251,10 @@ class MultiVolumeViewer(
         field_units: dict | None = None,
         cache_mb: float = 2048,
         background: bool = True,
+        panel_side: Literal["right", "left"] = "right",
+        panel_width: str = "470px",
+        figure_preset: str = "screen",
+        figure_presets: dict | None = None,
     ):
         super().__init__()
         if PLOT_ORDER not in ("xyz", "zyx"):
@@ -318,7 +328,21 @@ class MultiVolumeViewer(
         self._export_task, self._anim_cancel = None, False
         self._rotation_task = None
 
+        if panel_side not in ("right", "left"):
+            raise ValueError("panel_side must be 'right' or 'left'")
+        self.panel_side, self.panel_width = panel_side, str(panel_width)
+        from .multiviewer.ui import FIGURE_PRESETS
+
+        self.figure_presets = {**FIGURE_PRESETS, **(figure_presets or {})}
+        self._figure_preset = figure_preset
         self._build_ui()
+        if figure_preset not in self.figure_presets:
+            raise ValueError(
+                f"Unknown figure preset {figure_preset!r}; use one of "
+                f"{list(self.figure_presets)}"
+            )
+        if figure_preset != "screen":
+            self.set_figure_preset(figure_preset)
         if dict_data is not None:
             self.set_data(dict_data, labels=condition_labels)
 
@@ -1647,6 +1671,7 @@ class MultiVolumeViewer(
         self._trace_order, self._trace_cbar = vis, cbar
         for t in self.fig.data:
             t.on_click(self._on_trace_click)
+        self._update_status()
 
     # backward-compatible names
     def _update_all_traces(self):
