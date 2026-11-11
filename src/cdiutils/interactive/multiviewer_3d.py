@@ -301,6 +301,8 @@ class MultiVolumeViewer(
         self.facet_tolerance = float(facet_tolerance)
         self.iso_step = max(1, int(iso_step))
         self.default_cmaps = dict(default_cmaps or {})
+        self.patch_min_faces, self.patch_min_area = 20, 0.002
+        self._patch_cache = {}
         self.field_units = {
             k: mva.parse_unit(v) for k, v in (field_units or {}).items()
         }
@@ -1111,7 +1113,15 @@ class MultiVolumeViewer(
             if sel in COORD_SEL
             else sel
         )
-        if sel == "__facet__":
+        if sel == "__patch__":
+            ids = self._patch_ids(name, verts_idx, faces, normals)
+            n = int(ids.max()) + 1 if len(ids) else 0
+            vals = ids.astype(float) + 1.5  # -1 (none) -> first colour
+            colorscale, top = mva.patch_colorscale(n)
+            cmin, cmax = 0.0, float(top)
+            extra = {"intensitymode": "cell"}
+            cbar = None
+        elif sel == "__facet__":
             fam = self._face_families(verts_phys, faces, normals)
             nf = len(self.facet_families)
             vals = np.where(fam < 0, nf, fam).astype(float) + 0.5

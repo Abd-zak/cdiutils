@@ -413,6 +413,16 @@ class HelpMixin:
                 f"v.facet_stats('{n['amplitude']}', '{n['het_strain']}')            # per family\n"
                 f"v.facet_stats('{n['amplitude']}', '{n['het_strain']}', by='plane')  # per (hkl)"
             )
+            + "<p><b>Patches</b>: edge-connected faces of the same plane form one facet patch, with its "
+            "area, mean normal, deviation from the plane, (hkl) of the mean normal (cdiutils' facet-analysis "
+            "rule), centre and the mean / std of a field. <code>color_by='__patch__'</code> colours them; "
+            "labels write the plane on the facets facing the camera. Analyze tab → Facets → group by "
+            "<i>patches</i>, or:</p>"
+            + _code(
+                f"rows = v.facet_patches('{n['amplitude']}', '{n['het_strain']}', labels=True, colour=True)\n"
+                f"v.save_facet_csv('facets.csv', '{n['amplitude']}', '{n['het_strain']}')\n"
+                f"{{'patches': '{n['amplitude']}', 'field': '{n['het_strain']}', 'labels': True, 'csv': 'facets.csv'}}"
+            )
         )
 
     def _help_probe(self):

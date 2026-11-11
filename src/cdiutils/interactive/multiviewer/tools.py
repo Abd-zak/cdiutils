@@ -28,7 +28,7 @@ def _html_table(rows, cols):
     body = "".join(
         "<tr>"
         + "".join(
-            f"<td>{_fmt(r.get(c)) if c != cols[0] else r.get(c)}</td>"
+            f"<td>{_fmt(r.get(c)) if isinstance(r.get(c), float) else r.get(c, '')}</td>"
             for c in cols
         )
         + "</tr>"
@@ -155,7 +155,11 @@ class ToolsMixin:
             layout=L(width="95%"),
         )
         self.facet_by = widgets.Dropdown(
-            options=[("family", "family"), ("individual plane", "plane")],
+            options=[
+                ("family", "family"),
+                ("individual plane", "plane"),
+                ("patches (connected facets)", "patch"),
+            ],
             description="group by",
             style=D,
             layout=L(width="95%"),
@@ -164,7 +168,30 @@ class ToolsMixin:
             description="Compute facet table", layout=L(width="auto")
         )
         self.facet_out = widgets.HTML(
-            "<i>Set 'color by' to (facet family) on an isosurface to see the facets.</i>"
+            "<i>Set 'color by' to (facet family) or (facet patch) on an "
+            "isosurface to see the facets.</i>"
+        )
+        self.patch_min = widgets.IntText(
+            value=self.patch_min_faces,
+            description="min faces",
+            tooltip="Smaller patches are not listed (grey)",
+            style=D,
+            layout=L(width="48%"),
+        )
+        self.patch_labels = widgets.Checkbox(
+            value=False, description="(hkl) labels", indent=False
+        )
+        self.patch_show = widgets.Button(
+            description="Colour surface by patch", layout=L(width="auto")
+        )
+        self.facet_csv = widgets.Text(
+            value="facets.csv",
+            description="CSV",
+            style=D,
+            layout=L(width="60%"),
+        )
+        self.facet_csv_btn = widgets.Button(
+            description="Save CSV", layout=L(width="auto")
         )
         facet_box = widgets.VBox(
             [
@@ -175,12 +202,16 @@ class ToolsMixin:
                 self.facet_layer,
                 self.facet_field,
                 self.facet_by,
-                self.facet_btn,
+                widgets.HBox([self.patch_min, self.patch_labels]),
+                widgets.HBox([self.facet_btn, self.patch_show]),
+                widgets.HBox([self.facet_csv, self.facet_csv_btn]),
                 self.facet_out,
             ]
         )
         self.facet_apply.on_click(self._on_facet_apply)
         self.facet_btn.on_click(self._on_facet_table)
+        self.patch_show.on_click(self._on_patch_show)
+        self.facet_csv_btn.on_click(self._on_facet_csv)
 
         # --- surface shell / core ---
         self.reg_field = widgets.Dropdown(
@@ -589,7 +620,7 @@ class ToolsMixin:
         names = [
             k
             for k in self._layers
-            if self._style(k).get("color_by") == "__facet__"
+            if self._style(k).get("color_by") in ("__facet__", "__patch__")
         ]
         if names:
             self._refresh(None)
@@ -629,7 +660,27 @@ class ToolsMixin:
         vals = None
         if field:
             vals = np.asarray(
-                self._interp(field)(verts_idx[faces].mean(axis=1)), dtype=float
+                self._interp(field, True)(verts_idx[faces].mean(axis=1)),
+                dtype=float,
+            )
+            scale = self._unit_of(field)[1]
+            if scale != 1.0:
+                vals = vals * scale
+        if by == "patch":
+            patch = self._patch_ids(layer, verts_idx, faces, vn)
+            U = self.orientation_matrix
+            ncry = fn @ np.asarray(U, dtype=float).T
+            ncry /= np.maximum(np.linalg.norm(ncry, axis=1), 1e-30)[:, None]
+            cen = vp[faces].mean(axis=1)
+            return mva.patch_table(
+                patch,
+                plane,
+                fam,
+                areas,
+                ncry,
+                cen,
+                [lab for lab, _ in self.facet_families],
+                vals,
             )
         if by == "plane":
             labels = sorted(set(plane[fam >= 0]))
@@ -641,17 +692,171 @@ class ToolsMixin:
             fam, areas, [lab for lab, _ in self.facet_families], vals
         )
 
+    PATCH_COLUMNS = (
+        "patch",
+        "plane",
+        "family",
+        "faces",
+        "area_frac",
+        "deviation_deg",
+        "hkl_of_mean",
+    )
+
+    def facet_patches(
+        self,
+        layer,
+        field=None,
+        min_faces=None,
+        min_area_frac=None,
+        labels=False,
+        colour=False,
+        label_min_frac=0.01,
+    ):
+        """Facets of an isosurface as connected patches, with statistics.
+
+        Faces are classified by crystal plane (facet families, orientation
+        matrix and tolerance of :meth:`set_facet_settings`); edge-connected
+        faces of the same plane form a patch. Returns one row per patch:
+        plane, family, faces, area (``unit``²), area fraction, mean normal
+        (crystal frame), its deviation from the plane (deg), the (hkl) of the
+        mean normal (cdiutils' facet-analysis rule), centroid and, with
+        ``field``, the area-weighted mean / std of the field on the patch.
+
+        ``labels``: add a layer ``"<layer>:facets"`` with the plane of each
+        patch written at its centre: ``True`` / ``"front"`` for the patches
+        facing the current camera (labels are not hidden behind surfaces),
+        ``"all"`` for every patch; patches below ``label_min_frac`` of the
+        area are not labelled. ``colour``: colour the surface by patch.
+        """
+        layer = self._resolve_layer_name(layer)
+        if min_faces is not None:
+            self.patch_min_faces = int(min_faces)
+        if min_area_frac is not None:
+            self.patch_min_area = float(min_area_frac)
+        self._patch_cache.clear()
+        rows = self.facet_stats(layer, field, by="patch")
+        if colour:
+            self.set_layer_params(layer, color_by="__patch__")
+        name = f"{layer}:facets"
+        if name in self._layers:
+            self.delete_layer(name, cascade=False)
+        if labels and rows:
+            d = 0.03 * self.frame.diagonal()
+            eye = self._current_camera()[0]
+            labs = []
+            for r in rows:
+                if r["area_frac"] < label_min_frac:
+                    continue
+                n = self._lab_normal(r)
+                if labels != "all" and self.frame.phys_to_plot(n) @ eye <= 0:
+                    continue  # facing away from the camera
+                labs.append(
+                    (np.array([r["cx"], r["cy"], r["cz"]]) + d * n, r["plane"])
+                )
+            self.add_lines(name, [], coords="physical", labels=labs)
+            self._layer_transform[name] = dict(
+                self._layer_transform.get(layer) or {}
+            )
+        return rows
+
+    def _lab_normal(self, row):
+        """Patch normal back in the physical frame (labels sit outside)."""
+        n = np.array([row["nx"], row["ny"], row["nz"]])
+        n = np.linalg.solve(np.asarray(self.orientation_matrix, float), n)
+        return n / (np.linalg.norm(n) or 1.0)
+
+    def save_facet_csv(self, path, layer, field=None, by="patch"):
+        """Write :meth:`facet_stats` / :meth:`facet_patches` rows to CSV."""
+        import csv
+        from pathlib import Path
+
+        rows = self.facet_stats(layer, field, by=by)
+        path = Path(path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cols = list(dict.fromkeys(k for r in rows for k in r))
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=cols)
+            w.writeheader()
+            w.writerows(rows)
+        return path
+
+    def _patch_ids(self, layer, verts_idx, faces, vertex_normals):
+        key = (
+            layer,
+            id(faces),
+            len(faces),
+            tuple(lab for lab, _ in self.facet_families),
+            float(self.facet_tolerance),
+            tuple(np.round(np.ravel(self.orientation_matrix), 9)),
+            self.patch_min_faces,
+            self.patch_min_area,
+        )
+        hit = self._patch_cache.get(key)
+        if hit is not None and hit[0] is faces:
+            return hit[1]
+        vp = self.frame.idx_to_phys(verts_idx)
+        fn, areas = geo.face_normals(vp, faces)
+        fn = geo.orient_faces_like(fn, vertex_normals, faces)
+        fam, plane, _ = mva.classify_normals(
+            fn,
+            self.facet_families,
+            self.orientation_matrix,
+            self.facet_tolerance,
+        )
+        ids = mva.face_patches(
+            faces,
+            plane,
+            fam,
+            len(verts_idx),
+            areas,
+            self.patch_min_faces,
+            self.patch_min_area,
+        )
+        while len(self._patch_cache) >= 8:
+            self._patch_cache.pop(next(iter(self._patch_cache)))
+        self._patch_cache[key] = (faces, ids)
+        return ids
+
     def _on_facet_table(self, _b):
         try:
-            rows = self.facet_stats(
+            by = self.facet_by.value
+            if by == "patch":
+                rows = self.facet_patches(
+                    self.facet_layer.value,
+                    self.facet_field.value,
+                    min_faces=self.patch_min.value,
+                    labels=self.patch_labels.value,
+                )
+                cols = list(self.PATCH_COLUMNS)
+            else:
+                rows = self.facet_stats(
+                    self.facet_layer.value, self.facet_field.value, by
+                )
+                cols = ["family", "faces", "area_frac"]
+            if self.facet_field.value:
+                cols += ["mean", "std"]
+            self.facet_out.value = _html_table(rows, cols)
+        except Exception as e:
+            self.facet_out.value = f"<span style='color:#d62728'>{e}</span>"
+
+    def _on_patch_show(self, _b):
+        try:
+            self.patch_min_faces = int(self.patch_min.value)
+            self._patch_cache.clear()
+            self.set_layer_params(self.facet_layer.value, color_by="__patch__")
+            self._select_edit_layer(self.facet_layer.value)
+        except Exception as e:
+            self.facet_out.value = f"<span style='color:#d62728'>{e}</span>"
+
+    def _on_facet_csv(self, _b):
+        try:
+            p = self.save_facet_csv(
+                self.facet_csv.value,
                 self.facet_layer.value,
                 self.facet_field.value,
                 self.facet_by.value,
             )
-            cols = ["family", "faces", "area_frac"] + (
-                ["mean", "std"] if self.facet_field.value else []
-            )
-            self.facet_out.value = _html_table(rows, cols)
+            self.facet_out.value += f"<br>Saved <code>{p.resolve()}</code>"
         except Exception as e:
             self.facet_out.value = f"<span style='color:#d62728'>{e}</span>"
 

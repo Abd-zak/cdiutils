@@ -9,6 +9,7 @@ MultiVolumeViewer (multi-layer 3D viewer)
       add_clip, add_difference, add_region, add_lines, add_fitted_line,
       add_arrows, add_axes_triad, add_scale_bar, set_layer_params, set_units,
       rename_layer, delete_layer, probe, line_profile, facet_stats,
+      facet_patches, save_facet_csv,
       region_stats, set_facet_settings, set_ortho_center, link_cameras,
       export_mesh, layer_mesh, get_view_state, set_view_state, save_state,
       load_state, run_actions, run_actions_async, validate_actions,

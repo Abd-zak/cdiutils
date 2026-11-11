@@ -99,6 +99,12 @@ Unreleased
   ``panel_side`` / ``panel_width``; ``figure_preset`` / ``figure_presets``
   and ``set_figure_preset()`` (screen, paper 1200x900, slide 1600x900,
   poster 2400x1800). Panel colours follow the Jupyter theme.
+* Facet patches: edge-connected faces of the same crystal plane form a
+  patch; ``facet_patches()`` gives area, area fraction, mean normal and its
+  deviation, (hkl) of the mean normal (``cdiutils.facetanalysis`` rule),
+  centre and field mean / std per patch; ``color_by="__patch__"``, (hkl)
+  labels on the facets facing the camera, ``save_facet_csv()``, the
+  ``{"patches": ...}`` action and *group by: patches* in the Analyze tab.
 * ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
   labels, voxel size, units, options, start script) that opens the viewer
   in its place, with *Show configuration* and *Back*.

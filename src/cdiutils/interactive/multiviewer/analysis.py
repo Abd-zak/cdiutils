@@ -150,6 +150,151 @@ def facet_colorscale(n_families):
     return cs, k
 
 
+# =============================================================================
+# Facet patches
+# =============================================================================
+PATCH_COLORS = [
+    "#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948",
+    "#b07aa1", "#ff9da7", "#9c755f", "#86bcb6", "#d37295", "#8cd17d",
+]  # fmt: skip
+
+
+def face_patches(faces, plane, fam, n_verts, areas=None, min_faces=20,
+                 min_area_frac=0.002):  # fmt: skip
+    """Connected patches of mesh faces with the same plane label.
+
+    Two faces belong to the same patch when they share an edge and were
+    assigned the same crystal plane (e.g. ``(1-11)``) by
+    :func:`classify_normals`. Faces of no family and patches smaller than
+    ``min_faces`` faces or ``min_area_frac`` of the area get ``-1``.
+    Returns ``patch_id`` per face, numbered by decreasing area.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    faces = np.asarray(faces, dtype=np.int64)
+    nf = len(faces)
+    if not nf:
+        return np.zeros(0, dtype=int)
+    areas = np.ones(nf) if areas is None else np.asarray(areas, float)
+    codes = {p: i for i, p in enumerate(sorted(set(plane)))}
+    lab = np.array([codes[p] for p in plane])
+    lab[np.asarray(fam) < 0] = -1
+    e = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    e.sort(axis=1)
+    fid = np.tile(np.arange(nf), 3)
+    key = e[:, 0] * np.int64(n_verts) + e[:, 1]
+    o = np.argsort(key, kind="stable")
+    k, f = key[o], fid[o]
+    same = k[1:] == k[:-1]
+    a, b = f[:-1][same], f[1:][same]
+    keep = (lab[a] == lab[b]) & (lab[a] >= 0)
+    g = coo_matrix(
+        (np.ones(int(keep.sum())), (a[keep], b[keep])), shape=(nf, nf)
+    )
+    _, comp = connected_components(g, directed=False)
+    comp[lab < 0] = -1
+    total = float(areas.sum()) or 1.0
+    ids = [c for c in np.unique(comp) if c >= 0]
+    size = {
+        c: (int(np.sum(comp == c)), float(areas[comp == c].sum())) for c in ids
+    }
+    big = [
+        c for c in ids
+        if size[c][0] >= min_faces and size[c][1] / total >= min_area_frac
+    ]  # fmt: skip
+    big.sort(key=lambda c: -size[c][1])
+    out = np.full(nf, -1, dtype=int)
+    for i, c in enumerate(big):
+        out[comp == c] = i
+    return out
+
+
+def miller_label(normal_crystal):
+    """Approximate (hkl) of a normal, with cdiutils' facet analysis rule."""
+    try:
+        from cdiutils.facetanalysis.facet_utils import get_miller_indices
+
+        h = get_miller_indices(np.asarray(normal_crystal, dtype=float))
+    except Exception:
+        n = np.asarray(normal_crystal, dtype=float)
+        h = np.round(n / np.max(np.abs(n))).astype(int).tolist()
+    return "(" + "".join(str(int(v)) for v in h) + ")"
+
+
+def patch_table(patch, plane, fam, areas, normals_cry, centroids, family_labels,
+                values=None):  # fmt: skip
+    """One row per patch: plane, family, faces, area, area fraction, mean
+    normal (crystal frame) and its deviation from the plane, (hkl) of the
+    mean normal, centroid and area-weighted mean / std of ``values``."""
+    rows, total = [], float(np.sum(areas)) or 1.0
+    for pid in range(int(patch.max()) + 1 if len(patch) else 0):
+        m = patch == pid
+        if not m.any():
+            continue
+        a = areas[m]
+        w = a / a.sum()
+        n = (normals_cry[m] * w[:, None]).sum(axis=0)
+        n /= np.linalg.norm(n) or 1.0
+        f = int(np.bincount(fam[m][fam[m] >= 0]).argmax())
+        c = (centroids[m] * w[:, None]).sum(axis=0)
+        p = plane[m][0]
+        ideal = np.array(
+            [int(t) for t in re.findall(r"-?\d", str(p))], dtype=float
+        )
+        dev = (
+            float(
+                np.degrees(
+                    np.arccos(
+                        np.clip(abs(n @ ideal) / np.linalg.norm(ideal), -1, 1)
+                    )
+                )
+            )
+            if len(ideal) == 3 and np.linalg.norm(ideal) > 0
+            else float("nan")
+        )
+        row = {
+            "patch": pid,
+            "plane": str(p),
+            "family": family_labels[f] if 0 <= f < len(family_labels) else "?",
+            "faces": int(m.sum()),
+            "area": float(a.sum()),
+            "area_frac": float(a.sum() / total),
+            "nx": float(n[0]),
+            "ny": float(n[1]),
+            "nz": float(n[2]),
+            "deviation_deg": dev,
+            "hkl_of_mean": miller_label(n),
+            "cx": float(c[0]),
+            "cy": float(c[1]),
+            "cz": float(c[2]),
+        }
+        if values is not None:
+            v = values[m]
+            ok = np.isfinite(v)
+            if ok.any():
+                ww = a[ok] / a[ok].sum()
+                mu = float(np.sum(ww * v[ok]))
+                row.update(
+                    mean=mu,
+                    std=float(np.sqrt(np.sum(ww * (v[ok] - mu) ** 2))),
+                )
+        rows.append(row)
+    return rows
+
+
+def patch_colorscale(n):
+    """Discrete colorscale for patch ids 0..n-1, with -1 (none) grey."""
+    k = n + 1
+    cols = [OTHER_COLOR] + [
+        PATCH_COLORS[i % len(PATCH_COLORS)] for i in range(n)
+    ]
+    cs = []
+    for i, c in enumerate(cols):
+        cs += [[i / k, c], [(i + 1) / k, c]]
+    return cs, k
+
+
 def facet_table(fam, areas, labels, values=None):
     """Area-weighted statistics per family (``values`` sampled per face)."""
     rows, total = [], float(np.sum(areas)) or 1.0

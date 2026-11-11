@@ -964,6 +964,7 @@ class UIMixin:
             ]
             if spec["type"] in ("raw", "diff", "region", "clip"):
                 cb.append(("(facet family)", "__facet__"))
+                cb.append(("(facet patch)", "__patch__"))
             if "color_by" in w:
                 self._set_options(w["color_by"], cb, fallback="__self__")
             for key in ("source", "a", "field", "support"):
@@ -1045,7 +1046,7 @@ class UIMixin:
     def _unit_field_of(self, name):
         w, spec = self._layer_widgets.get(name, {}), self._layers[name]
         sel = w["color_by"].value if "color_by" in w else "__self__"
-        if sel in ("__constant__", "__facet__"):
+        if sel in ("__constant__", "__facet__", "__patch__"):
             return None
         return self._color_field(name, spec, sel)
 
@@ -1736,7 +1737,7 @@ class UIMixin:
             return False
         st = self._style(name)
         if (
-            st["color_by"] in ("__facet__", "__constant__")
+            st["color_by"] in ("__facet__", "__patch__", "__constant__")
             or st.get("range_all")
             or self._wants_cbar(st) != bool(self._trace_cbar.get(name))
         ):

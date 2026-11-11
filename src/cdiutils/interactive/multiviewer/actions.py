@@ -46,7 +46,7 @@ STYLE_KEYS = {
     "op": "alias of opacity",
     "cmap": "colormap name or solid colour (gray, red, ...)",
     "color_by": "'__self__', another volume, '__x__'/'__y__'/'__z__', "
-    "'__constant__' or '__facet__'",
+    "'__constant__', '__facet__' or '__patch__'",
     "nan_policy": "none (holes), mean, zero, min or max",
     "as_mask": "isosurface of the thresholded mask",
     "abs_iso": "isosurface of |value| (default True for volumes)",
@@ -522,6 +522,27 @@ _register(
         example={"facets": "100, 110, 111, 311", "tolerance": 8},
     ),
     Action(
+        "patches",
+        "Facets of an isosurface as connected patches: colour, (hkl) labels "
+        "and a table (optionally saved as CSV).",
+        {
+            "layer": P(ref="layer"),
+            "field": P(None, "statistics of this volume", ref="volume"),
+            "min_faces": P(None, "smaller patches are ignored (default 20)"),
+            "labels": P(False, "True / 'front' or 'all'"),
+            "colour": P(True, "colour the surface by patch"),
+            "csv": P(None, "path of a CSV table"),
+        },
+        main="layer",
+        category="Scene",
+        example={
+            "patches": "amplitude",
+            "field": "het_strain",
+            "labels": True,
+            "csv": "figures/facets.csv",
+        },  # fmt: skip
+    ),
+    Action(
         "probe",
         "Add a probe point and read every volume there.",
         {
@@ -993,6 +1014,7 @@ class ActionsMixin:
             "__z__",
             "__constant__",
             "__facet__",
+            "__patch__",
         }
         for i, (name, kw) in enumerate(steps):
             where = f"step {i + 1} ({name})"
@@ -1400,6 +1422,15 @@ class ActionsMixin:
 
     def _act_facets(self, families, matrix, tolerance):
         self.set_facet_settings(matrix, families, tolerance)
+
+    def _act_patches(self, layer, field, min_faces, labels, colour, csv):
+        layer = self._resolve_layer_name(layer)
+        rows = self.facet_patches(
+            layer, field, min_faces=min_faces, labels=labels, colour=colour
+        )
+        if csv:
+            self.save_facet_csv(csv, layer, field, by="patch")
+        return rows
 
     def _act_probe(self, point, coords):
         return self.probe(point, coords=coords)
