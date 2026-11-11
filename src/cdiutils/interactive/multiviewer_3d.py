@@ -284,6 +284,12 @@ class MultiVolumeViewer(
         shape=None,
         script=None,
         verbose: bool = True,
+        scans_as: str = "conditions",
+        arrange: str = "side",
+        source: str = "reconstruction",
+        diffraction: str = "cropped",
+        intensity: str = "log1p",
+        resample: bool = True,
         **kwargs,
     ):
         """Open cdiutils post-processing results.
@@ -298,8 +304,9 @@ class MultiVolumeViewer(
             het_strain, het_strain_from_dspacing, dspacing,
             lattice_parameter when present), or ``"all"``.
         labels : condition labels; default from ``label_from``: ``"scan"``
-            (``S123``), ``"file"``, a parameter name of the CXI file, or a
-            callable ``f(result) -> str``.
+            (``S123``), ``"sample"`` (``Cu_BCDI S123``), ``"file"``, a
+            parameter name of the CXI file, or a callable
+            ``f(result) -> str``.
         mask_outside : values outside the support set to NaN (cdiutils
             stores 0 there), except amplitude.
         normalise_amplitude : amplitude / max, so the pipeline isosurface
@@ -309,6 +316,21 @@ class MultiVolumeViewer(
         shape : common grid shape (default: the largest).
         script : actions (list, YAML/JSON path) run after opening.
         verbose : print the configuration first.
+        scans_as : ``"conditions"`` (default; one slider position per scan,
+            e.g. pressure steps of one particle) or ``"layers"`` (every scan
+            as its own layers ``"S1 | amplitude"``, e.g. different particles
+            shown together).
+        arrange : with ``scans_as="layers"``: ``"side"`` (scans placed side
+            by side, in a grid along plot x and y) or ``"overlay"`` (same
+            place).
+        source : ``"reconstruction"`` (default) or ``"diffraction"``: the
+            measured intensity of ``S*_preprocessed_data.cxi``, with
+            ``diffraction="cropped"`` (detector frame, index units) or
+            ``"orthogonalised"`` (q grid) and ``intensity="log1p"``,
+            ``"sqrt"`` or ``"linear"``.
+        resample : scans with different voxel sizes are resampled
+            (linear) to the finest one, so they keep their true size;
+            ``False`` keeps the arrays and uses the first voxel size.
         **kwargs : other :class:`MultiVolumeViewer` arguments, e.g.
             ``voxel_size`` to override the file, ``field_units``.
 
@@ -326,17 +348,40 @@ class MultiVolumeViewer(
             normalise_amplitude,
             vti_convention,
             shape,
+            source,
+            diffraction,
+            intensity,
+            resample,
         )
         return cls._from_results(
-            results, labs, notes, script=script, verbose=verbose, **kwargs
+            results,
+            labs,
+            notes,
+            script=script,
+            verbose=verbose,
+            scans_as=scans_as,
+            arrange=arrange,
+            **kwargs,
         )
 
     @classmethod
     def _from_results(
-        cls, results, labels, notes, script=None, verbose=True, **kwargs
+        cls,
+        results,
+        labels,
+        notes,
+        script=None,
+        verbose=True,
+        scans_as="conditions",
+        arrange="side",
+        **kwargs,
     ):
         from .multiviewer import loader
 
+        if scans_as not in ("conditions", "layers"):
+            raise ValueError("scans_as must be 'conditions' or 'layers'")
+        if arrange not in ("side", "overlay"):
+            raise ValueError("arrange must be 'side' or 'overlay'")
         vs = kwargs.pop("voxel_size", None)
         if vs is None:
             vs = next((r.voxel_size for r in results if r.voxel_size), None)
@@ -346,7 +391,7 @@ class MultiVolumeViewer(
             )
         vs = tuple(float(x) for x in np.ravel(vs))
         vs = vs * 3 if len(vs) == 1 else vs
-        unit = kwargs.pop("unit", "nm")
+        unit = kwargs.pop("unit", None) or results[0].unit or "nm"
         names = list(results[0].fields)
         units = {k: v for k, v in loader.CDIUTILS_UNITS.items() if k in names}
         units.update(
@@ -358,19 +403,67 @@ class MultiVolumeViewer(
         thr = next(
             (r.isosurface for r in results if r.isosurface is not None), None
         )
+        layers = scans_as == "layers" and len(results) > 1
         if verbose:
-            print(loader.summary(results, labels, vs, unit, units, thr, notes))
-        multi = len(results) > 1
-        viewer = cls(
-            [r.fields for r in results] if multi else results[0].fields,
-            voxel_size=vs,
-            unit=unit,
-            condition_labels=labels if multi else None,
-            field_units=units,
-            **kwargs,
-        )
-        if thr is not None and "amplitude" in viewer._layers:
-            viewer.set_layer_params("amplitude", thr=thr)
+            mode = (
+                f"scans as layers ({arrange})"
+                if layers
+                else "scans as conditions"
+                if len(results) > 1
+                else "one scan"
+            )
+            print(
+                loader.summary(results, labels, vs, unit, units, thr, notes)
+                + f"\nmode            : {mode}"
+            )
+        if layers:
+            data = {
+                f"{lab} | {k}": a
+                for lab, r in zip(labels, results)
+                for k, a in r.fields.items()
+            }
+            units = {
+                f"{lab} | {k}": u for lab in labels for k, u in units.items()
+            }
+            viewer = cls(
+                data, voxel_size=vs, unit=unit, field_units=units, **kwargs
+            )
+            first = names[0]
+            shown = [f"{lab} | {first}" for lab in labels]
+            ext = viewer.frame.phys_to_plot(
+                np.subtract(*viewer.frame.bounds_phys()[::-1])
+            )
+            for i, (lab, r) in enumerate(zip(labels, results)):
+                if r.isosurface is not None and f"{lab} | amplitude" in data:
+                    viewer.set_layer_params(
+                        f"{lab} | amplitude", thr=r.isosurface
+                    )
+                if arrange == "side" and i:
+                    # a compact grid along plot x and y keeps the scene
+                    # roughly cubic (true proportions in Plotly)
+                    ncol = int(np.ceil(np.sqrt(len(results))))
+                    row, col = divmod(i, ncol)
+                    for k in names:
+                        viewer.set_layer_params(
+                            f"{lab} | {k}",
+                            trans_x=float(col * ext[0] * 1.15),
+                            trans_y=float(row * ext[1] * 1.15),
+                        )
+            viewer.run_actions([{"only": shown}])
+            if arrange == "side":
+                viewer.fit_aspect()
+        else:
+            multi = len(results) > 1
+            viewer = cls(
+                [r.fields for r in results] if multi else results[0].fields,
+                voxel_size=vs,
+                unit=unit,
+                condition_labels=labels if multi else None,
+                field_units=units,
+                **kwargs,
+            )
+            if thr is not None and "amplitude" in viewer._layers:
+                viewer.set_layer_params("amplitude", thr=thr)
         viewer.cdiutils_info = [
             {
                 "path": str(r.path),
@@ -378,6 +471,7 @@ class MultiVolumeViewer(
                 "voxel_size": r.voxel_size,
                 "isosurface": r.isosurface,
                 "convention": r.convention,
+                "sample": r.sample,
                 "params": r.params,
             }
             for r in results
@@ -385,6 +479,33 @@ class MultiVolumeViewer(
         if script is not None:
             viewer.run_actions(script)
         return viewer
+
+    def fit_aspect(self):
+        """True proportions for the visible layers, sized to fit the view.
+
+        Sets ``aspectmode="manual"`` with the aspect ratio of the visible
+        data (largest axis = 1). Plotly's default switches to a cube (and
+        distorts shapes) when one axis is more than 4x longer than another,
+        e.g. scans placed side by side. ``"auto"`` restores the default.
+        """
+        from .multiviewer.anim import _trace_bounds
+
+        self._rebuild()
+        traces = [
+            t.to_plotly_json()
+            for t in self.fig.data
+            if not str(t.name or "").startswith("__")
+        ]
+        lo, hi = _trace_bounds(traces)
+        if lo is None:
+            return None
+        rng = np.maximum(hi - lo, 1e-12)
+        r = rng / rng.max()
+        self.fig.layout.scene.aspectmode = "manual"
+        self.fig.layout.scene.aspectratio = dict(
+            x=float(r[0]), y=float(r[1]), z=float(r[2])
+        )
+        return r
 
     @classmethod
     def launcher(cls, root=".", **kwargs):

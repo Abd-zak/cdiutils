@@ -189,19 +189,20 @@ class ToolsMixin:
         self.reg_support = widgets.Dropdown(
             options=[], description="support", style=D, layout=L(width="95%")
         )
+        # 0 means automatic (NaN is not allowed in widget messages)
         self.reg_thr = widgets.FloatText(
-            value=np.nan,
+            value=0.0,
             description="support ≥",
             style=D,
             layout=L(width="95%"),
-            tooltip="NaN = 30% of the support maximum",
+            tooltip="0 = 30% of the support maximum",
         )
         self.reg_depth = widgets.FloatText(
-            value=np.nan,
+            value=0.0,
             description="shell depth",
             style=D,
             layout=L(width="95%"),
-            tooltip="Physical units; NaN = 2 voxels",
+            tooltip="Physical units; 0 = 2 voxels",
         )
         self.reg_btn = widgets.Button(
             description="Compute", layout=L(width="auto")
@@ -687,9 +688,12 @@ class ToolsMixin:
         }
 
     def _region_inputs(self):
-        thr = self.reg_thr.value if np.isfinite(self.reg_thr.value) else None
+        t = float(self.reg_thr.value or 0)
+        thr = t if np.isfinite(t) and t > 0 else None
         dep = (
-            self.reg_depth.value if np.isfinite(self.reg_depth.value) else None
+            float(self.reg_depth.value)
+            if np.isfinite(self.reg_depth.value) and self.reg_depth.value > 0
+            else None
         )
         return self.reg_field.value, self.reg_support.value, thr, dep
 

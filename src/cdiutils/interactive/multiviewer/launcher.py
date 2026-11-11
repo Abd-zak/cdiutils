@@ -55,6 +55,35 @@ class Launcher(widgets.VBox):
         self.find_btn = widgets.Button(
             description="Find results", layout=_L(width="130px")
         )
+        self.source = widgets.Dropdown(
+            options=[
+                ("reconstruction (strain, phase, ...)", "reconstruction"),
+                ("diffraction, detector frame", "cropped"),
+                ("diffraction, orthogonalised (q)", "orthogonalised"),
+            ],
+            value="reconstruction",
+            description="Data",
+            style=_D,
+            layout=_L(width="60%"),
+        )
+        self.scans_as = widgets.Dropdown(
+            options=[
+                ("conditions (slider)", "conditions"),
+                ("layers, side by side", "side"),
+                ("layers, overlaid", "overlay"),
+            ],
+            value="conditions",
+            description="Several scans as",
+            style=_D,
+            layout=_L(width="60%"),
+        )
+        self.label_from = widgets.Dropdown(
+            options=[("scan (S12)", "scan"), ("sample + scan", "sample")],
+            value="scan",
+            description="Default labels",
+            style=_D,
+            layout=_L(width="60%"),
+        )
         self.scans = widgets.SelectMultiple(
             options=[],
             description="Results",
@@ -114,6 +143,7 @@ class Launcher(widgets.VBox):
         self.folder.continuous_update = False  # Enter / leaving the field
         self.folder.observe(lambda _c: self.find(), names="value")
         self.scans.observe(lambda _c: self._refresh_fields(), names="value")
+        self.source.observe(lambda _c: self.find(), names="value")
         self.show_btn.on_click(lambda _b: self.show_config())
         self.open_btn.on_click(lambda _b: self.open_viewer())
         self.back_btn.on_click(lambda _b: self.back())
@@ -122,9 +152,12 @@ class Launcher(widgets.VBox):
             [
                 widgets.HTML("<b>Open cdiutils results</b>"),
                 widgets.HBox([self.folder, self.find_btn]),
+                self.source,
                 self.scans,
                 widgets.HTML("Fields"),
                 self.fields_box,
+                self.scans_as,
+                self.label_from,
                 self.labels,
                 self.voxel,
                 self.units,
@@ -149,12 +182,18 @@ class Launcher(widgets.VBox):
     def find(self):
         try:
             root = Path(self.folder.value).expanduser()
-            files = loader.find_results(root)
+            src = (
+                "reconstruction"
+                if self.source.value == "reconstruction"
+                else "diffraction"
+            )
+            files = loader.find_results(root, source=src)
             base = root if root.is_dir() else root.parent
             self.scans.options = [
                 (os.path.relpath(f, base), str(f)) for f in files
             ]
-            self.scans.value = tuple(str(f) for f in files)
+            # only the first is selected: loading many scans takes memory
+            self.scans.value = tuple(str(f) for f in files[:1])
             self.status.value = (
                 f"{len(files)} result(s) found"
                 if files
@@ -166,6 +205,12 @@ class Launcher(widgets.VBox):
     def _refresh_fields(self):
         sel = list(self.scans.value)
         prev = {k for k, cb in self._field_cbs.items() if cb.value}
+        if self.source.value != "reconstruction":
+            self._field_cbs = {}
+            self.fields_box.children = [
+                widgets.HTML("<i>intensity, shown as log(1 + I)</i>")
+            ]
+            return
         try:
             names = loader.peek_fields(sel[0]) if sel else []
         except Exception as e:
@@ -190,12 +235,22 @@ class Launcher(widgets.VBox):
             raise ValueError("Select at least one result.")
         fields = [k for k, cb in self._field_cbs.items() if cb.value] or None
         labels = [x.strip() for x in self.labels.value.split(",") if x.strip()]
+        diff = self.source.value != "reconstruction"
         cfg = {
             "paths": list(self.scans.value),
-            "fields": fields,
+            "fields": None if diff else fields,
             "labels": labels or None,
+            "label_from": self.label_from.value,
             "mask_outside": self.mask.value,
             "normalise_amplitude": self.norm.value,
+            "source": "diffraction" if diff else "reconstruction",
+            "diffraction": self.source.value if diff else "cropped",
+            "scans_as": "conditions"
+            if self.scans_as.value == "conditions"
+            else "layers",
+            "arrange": "overlay"
+            if self.scans_as.value == "overlay"
+            else "side",
         }
         vs = parse_floats(self.voxel.value, 3)
         if vs:
@@ -209,12 +264,18 @@ class Launcher(widgets.VBox):
 
     def _load(self, cfg):
         key = repr(
-            (
-                cfg["paths"],
-                cfg["fields"],
-                cfg["labels"],
-                cfg["mask_outside"],
-                cfg["normalise_amplitude"],
+            tuple(
+                cfg[k]
+                for k in (
+                    "paths",
+                    "fields",
+                    "labels",
+                    "label_from",
+                    "mask_outside",
+                    "normalise_amplitude",
+                    "source",
+                    "diffraction",
+                )
             )
         )
         if self._cache is None or self._cache[0] != key:
@@ -223,8 +284,11 @@ class Launcher(widgets.VBox):
                 cfg["paths"],
                 cfg["fields"],
                 cfg["labels"],
+                label_from=cfg["label_from"],
                 mask_outside=cfg["mask_outside"],
                 normalise_amplitude=cfg["normalise_amplitude"],
+                source=cfg["source"],
+                diffraction=cfg["diffraction"],
             )
             self._cache = (key, *res)
         return self._cache[1:]
@@ -237,6 +301,7 @@ class Launcher(widgets.VBox):
             vs = cfg.get("voxel_size") or next(
                 (r.voxel_size for r in results if r.voxel_size), (1, 1, 1)
             )
+            unit = results[0].unit or "nm"
             units = {
                 k: v
                 for k, v in loader.CDIUTILS_UNITS.items()
@@ -248,7 +313,7 @@ class Launcher(widgets.VBox):
                 None,
             )
             self.summary_text = loader.summary(
-                results, labels, vs, "nm", units, thr, notes
+                results, labels, vs, unit, units, thr, notes
             )
             self.out.clear_output()
             with self.out:
@@ -276,6 +341,8 @@ class Launcher(widgets.VBox):
                     notes,
                     script=cfg.get("script"),
                     verbose=True,
+                    scans_as=cfg["scans_as"],
+                    arrange=cfg["arrange"],
                     **kw,
                 )
             self.status.value = ""

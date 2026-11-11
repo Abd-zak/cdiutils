@@ -47,6 +47,8 @@ PATTERNS = (
     "*_structural_properties.npz",
     "*_structural_properties.vti",
 )
+DIFFRACTION_PATTERNS = ("*_preprocessed_data.cxi",)
+INTENSITY_TRANSFORMS = ("log1p", "sqrt", "linear")
 
 
 @dataclass
@@ -61,6 +63,8 @@ class Result:
     convention: str | None = None
     params: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
+    sample: str | None = None
+    unit: str | None = None  # voxel-size unit when not nm (diffraction)
     file_shape: tuple | None = None  # before any common-grid crop/pad
 
     @property
@@ -85,19 +89,21 @@ def _natural(path):
     ]
 
 
-def find_results(path, recursive=True) -> list:
+def find_results(path, recursive=True, source="reconstruction") -> list:
     """Result files of a file, a scan folder or a folder of scans.
 
     One file per scan is returned, preferring ``.cxi`` > ``.npz`` > ``.vti``,
-    sorted naturally (S2 before S10).
+    sorted naturally (S2 before S10). ``source="diffraction"`` looks for
+    ``S*_preprocessed_data.cxi`` instead.
     """
+    patterns = DIFFRACTION_PATTERNS if source == "diffraction" else PATTERNS
     p = Path(path).expanduser()
     if p.is_file():
         return [p]
     if not p.is_dir():
         raise FileNotFoundError(f"No such file or folder: {p}")
     best = {}
-    for rank, pat in enumerate(PATTERNS):
+    for rank, pat in enumerate(patterns):
         hits = p.rglob(pat) if recursive else p.glob(pat)
         for f in hits:
             if ".ipynb_checkpoints" in f.parts:
@@ -182,6 +188,8 @@ def _read_cxi(path, fields):
                         res.isosurface = float(iso)
             elif k.startswith("parameters"):
                 res.params = _h5_params(g)
+            elif k.startswith("sample") and "sample_name" in g:
+                res.sample = str(_scalar(g["sample_name"][()]))
             elif k.startswith(("image", "data", "process")):
                 continue
             elif "data" in g and g["data"].ndim == 3:
@@ -268,6 +276,69 @@ def _read_vti(path, fields, convention="cxi"):
     return res
 
 
+def read_diffraction(path, kind="cropped", intensity="log1p") -> Result:
+    """Measured intensity from ``S*_preprocessed_data.cxi`` (reciprocal space).
+
+    ``kind``: ``"cropped"`` (detector frame: pixel / rocking-step indices) or
+    ``"orthogonalised"`` (regular q grid; its spacing in 1/Å is used when the
+    file stores it). ``intensity``: ``log1p``, ``sqrt`` or ``linear``.
+    """
+    import h5py
+
+    if intensity not in INTENSITY_TRANSFORMS:
+        raise ValueError(
+            f"intensity must be one of {INTENSITY_TRANSFORMS}, got {intensity!r}"
+        )
+    keys = {
+        "cropped": "entry_1/cropped_detector_data",
+        "orthogonalised": "entry_1/orthogonalised_detector_data",
+    }
+    if kind not in keys:
+        raise ValueError("kind must be 'cropped' or 'orthogonalised'")
+    res = Result(Path(path), {})
+    with h5py.File(path, "r") as f:
+        g = f.get(keys[kind])
+        if g is None:
+            raise KeyError(f"{Path(path).name}: no {keys[kind]}")
+        data = np.squeeze(np.asarray(g["data"][()] if "data" in g else g[()]))
+        if data.ndim != 3:
+            raise ValueError(f"{keys[kind]} is not 3D: {data.shape}")
+        e = f["entry_1"]
+        for k in e:
+            if k.startswith("parameters"):
+                res.params = _h5_params(e[k])
+            elif k.startswith("sample") and "sample_name" in e[k]:
+                res.sample = str(_scalar(e[k]["sample_name"][()]))
+            elif kind == "orthogonalised" and k.startswith("result"):
+                q = [e[k].get(n) for n in ("qx_xu", "qy_xu", "qz_xu")]
+                if all(x is not None for x in q):
+                    q = [np.ravel(x[()]).astype(float) for x in q]
+                    if [len(x) for x in q] == list(data.shape):
+                        res.voxel_size = tuple(
+                            float(np.mean(np.diff(x))) for x in q
+                        )
+                        res.unit = "1/Å"
+    a = np.nan_to_num(data.astype(np.float32), nan=0, posinf=0, neginf=0)
+    a = np.maximum(a, 0)
+    if intensity == "log1p":
+        a = np.log1p(a)
+    elif intensity == "sqrt":
+        a = np.sqrt(a)
+    res.fields = {"intensity": a}
+    scan = res.params.get("scan")
+    res.scan = str(scan) if scan is not None else _scan_of(path)
+    if res.voxel_size is None:
+        res.unit = "index"
+        res.voxel_size = (1.0, 1.0, 1.0)
+        res.notes.append(
+            f"{Path(path).name}: {kind} diffraction in index units "
+            "(detector pixels / rocking steps), not calibrated q"
+        )
+    res.notes.append(f"intensity shown as {intensity}(I)")
+    res.file_shape = a.shape
+    return res
+
+
 def peek_fields(path) -> list:
     """Names of the 3D fields of a result file, without loading them."""
     p = Path(path)
@@ -312,6 +383,8 @@ def read_result(
     if not res.fields:
         raise ValueError(f"{p}: no 3D field found")
     res.scan = res.scan or _scan_of(p)
+    if res.sample is None and res.scan and p.parent.name == f"S{res.scan}":
+        res.sample = p.parent.parent.name  # pipeline: <sample>/S<scan>/
     support = res.fields.get("support")
     if fields is None:
         keep = [k for k in DEFAULT_FIELDS if k in res.fields]
@@ -347,6 +420,40 @@ def read_result(
 # --------------------------------------------------------------------------
 # Several scans
 # --------------------------------------------------------------------------
+
+
+def _zoom_nan(a, factors):
+    """Linear resampling that keeps NaN regions (normalised interpolation)."""
+    from scipy.ndimage import zoom
+
+    a = np.asarray(a, dtype=np.float32)
+    m = np.isfinite(a)
+    if m.all():
+        return zoom(a, factors, order=1).astype(np.float32)
+    v = zoom(np.where(m, a, 0), factors, order=1)
+    w = zoom(m.astype(np.float32), factors, order=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(w > 0.5, v / w, np.nan).astype(np.float32)
+
+
+def resample_to_common(results):
+    """Resample results to the finest voxel size along each axis."""
+    target = np.min([r.voxel_size for r in results], axis=0)
+    notes = []
+    for r in results:
+        f = np.asarray(r.voxel_size, float) / target
+        if np.allclose(f, 1, rtol=1e-3):
+            continue
+        r.fields = {k: _zoom_nan(a, f) for k, a in r.fields.items()}
+        notes.append(
+            f"{r.path.name}: resampled (linear) from voxel "
+            + ", ".join(f"{v:.4g}" for v in r.voxel_size)
+            + " to "
+            + ", ".join(f"{v:.4g}" for v in target)
+            + f" -> {r.shape}"
+        )
+        r.voxel_size = tuple(float(v) for v in target)
+    return notes
 
 
 def _fit_shape(a, shape, fill):
@@ -395,13 +502,21 @@ def common_grid(results, shape=None):
 
 def labels_for(results, labels=None, label_from="scan"):
     """Condition labels: explicit, from the scan number, a parameter or a
-    callable ``f(result) -> str``."""
+    callable ``f(result) -> str``.
+
+    Labels must be unique (they name conditions or layers): default labels
+    that repeat (e.g. ``S1`` in several samples) get the sample name, then
+    a number; repeated explicit labels are an error.
+    """
     if labels is not None:
         labels = [str(x) for x in labels]
         if len(labels) != len(results):
             raise ValueError(
                 f"{len(labels)} labels for {len(results)} results"
             )
+        dup = sorted({x for x in labels if labels.count(x) > 1})
+        if dup:
+            raise ValueError(f"labels must be unique; repeated: {dup}")
         return labels
     out = []
     for i, r in enumerate(results):
@@ -409,11 +524,35 @@ def labels_for(results, labels=None, label_from="scan"):
             out.append(str(label_from(r)))
         elif label_from == "scan":
             out.append(f"S{r.scan}" if r.scan else r.path.stem)
+        elif label_from == "sample":
+            scan = f"S{r.scan}" if r.scan else r.path.stem
+            out.append(f"{r.sample} {scan}" if r.sample else scan)
         elif label_from in ("file", "name"):
             out.append(r.path.stem)
         else:
             v = r.params.get(label_from)
             out.append(str(v) if v is not None else f"#{i}")
+    return _unique(out, results)
+
+
+def _unique(labels, results):
+    out = list(labels)
+    for _ in range(2):
+        dup = {x for x in out if out.count(x) > 1}
+        if not dup:
+            return out
+        for i, r in enumerate(results):
+            if (
+                out[i] in dup
+                and r.sample
+                and not out[i].startswith(f"{r.sample} ")
+            ):
+                out[i] = f"{r.sample} {out[i]}"
+    seen = {}
+    for i, x in enumerate(out):  # still repeated: number them
+        if out.count(x) > 1:
+            seen[x] = seen.get(x, 0) + 1
+            out[i] = f"{x} #{seen[x]}"
     return out
 
 
@@ -426,37 +565,58 @@ def load(
     normalise_amplitude=True,
     vti_convention="cxi",
     shape=None,
+    source="reconstruction",
+    diffraction="cropped",
+    intensity="log1p",
+    resample=True,
 ):
     """Read one or several results; returns ``(results, labels, notes)``.
 
     ``paths``: a file, a folder (all scans found in it) or a list of them.
+    ``source="diffraction"`` reads the measured intensity of the
+    preprocessed files instead (see :func:`read_diffraction`).
+    ``resample``: scans with different voxel sizes are resampled (linear,
+    NaN-aware) to the finest voxel size along each axis, so they are shown
+    with their true size; ``False`` keeps the arrays and uses the first
+    voxel size (with a warning).
     """
+    if source not in ("reconstruction", "diffraction"):
+        raise ValueError("source must be 'reconstruction' or 'diffraction'")
     if isinstance(paths, (str, os.PathLike)):
         paths = [paths]
     files = []
     for p in paths:
-        found = find_results(p)
+        found = find_results(p, source=source)
         if not found:
+            pats = (
+                DIFFRACTION_PATTERNS if source == "diffraction" else PATTERNS
+            )
             raise FileNotFoundError(
                 f"No cdiutils result in {p} (looked for "
-                + ", ".join(PATTERNS)
+                + ", ".join(pats)
                 + ")"
             )
         files += found
-    results = [
-        read_result(
-            f, fields, mask_outside, normalise_amplitude, vti_convention
-        )
-        for f in files
-    ]
+    if source == "diffraction":
+        results = [read_diffraction(f, diffraction, intensity) for f in files]
+    else:
+        results = [
+            read_result(
+                f, fields, mask_outside, normalise_amplitude, vti_convention
+            )
+            for f in files
+        ]
     notes = [n for r in results for n in r.notes]
     if len(results) > 1:
-        notes += common_grid(results, shape)
         vs = [r.voxel_size for r in results if r.voxel_size is not None]
         if vs and not all(np.allclose(v, vs[0], rtol=1e-3) for v in vs):
-            msg = f"voxel sizes differ between scans {vs}; using {vs[0]}"
-            warnings.warn(msg, stacklevel=2)
-            notes.append(msg)
+            if resample and len(vs) == len(results):
+                notes += resample_to_common(results)
+            else:
+                msg = f"voxel sizes differ between scans {vs}; using {vs[0]}"
+                warnings.warn(msg, stacklevel=2)
+                notes.append(msg)
+        notes += common_grid(results, shape)
     elif shape is not None:
         notes += common_grid(results, shape)
     return results, labels_for(results, labels, label_from), notes
@@ -490,7 +650,7 @@ def summary(results, labels, voxel_size, unit, field_units, thr, notes):
     lines.append(
         "voxel size used : "
         + ", ".join(f"{v:.4g}" for v in voxel_size)
-        + f" {unit} (z, y, x = array axes)"
+        + f" {unit} (array axes)"
     )
     lines.append(f"amplitude iso   : {thr:.3g}" if thr is not None else "")
     lines.append("fields          :")

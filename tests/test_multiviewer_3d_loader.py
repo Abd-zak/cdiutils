@@ -201,7 +201,8 @@ def test_missing_voxel_size_is_explained(tmp_path):
 def test_launcher(results):
     root, dirs = results
     lz = MultiVolumeViewer.launcher(root, figsize=(5, 5))
-    assert len(lz.scans.options) == 3 and len(lz.scans.value) == 3
+    assert len(lz.scans.options) == 3 and len(lz.scans.value) == 1
+    lz.scans.value = tuple(v for _, v in lz.scans.options)
     assert lz._field_cbs["het_strain"].value
     assert not lz._field_cbs.get("support")
     lz._field_cbs["dspacing"].value = False
@@ -299,3 +300,201 @@ def test_vti_round_trip(tmp_path, conv):
     assert r.voxel_size == (3.0, 4.0, 5.0) and r.scan == "9"
     assert np.allclose(r.fields["amplitude"], p["amplitude"] / 50)
     assert any("convention" in n for n in r.notes)
+
+
+def write_preprocessed(path, scan, shape=(20, 22, 24), sample="Cu_BCDI"):
+    """Same layout as BcdiPipeline._save_preprocessed_data."""
+    from cdiutils.io.cxi import CXIFile
+
+    z, y, x = np.mgrid[: shape[0], : shape[1], : shape[2]].astype(float)
+    c = np.array(shape) / 2
+    inten = 1e4 * np.exp(
+        -((z - c[0]) ** 2 + (y - c[1]) ** 2 + (x - c[2]) ** 2) / 8
+    )
+    with CXIFile(str(path), "w") as cxi:
+        cxi.stamp()
+        cxi.create_cxi_group(
+            "result",
+            qx_xu=np.linspace(2.0, 2.1, shape[0]),
+            qy_xu=np.linspace(-0.05, 0.05, shape[1]),
+            qz_xu=np.linspace(-0.06, 0.06, shape[2]),
+        )
+        cxi.create_cxi_group("sample", "sample_name", sample_name=sample)
+        cxi.create_cxi_group("parameters", scan=scan)
+        p = cxi.create_cxi_image(inten, data_type="cropped detector data")
+        cxi.softlink("entry_1/cropped_detector_data", p)
+        p = cxi.create_cxi_image(inten, data_type="orthogonalised data")
+        cxi.softlink("entry_1/orthogonalised_detector_data", p)
+
+
+def test_scans_as_layers(results, capsys):
+    root, dirs = results
+    v = MultiVolumeViewer.from_cdiutils(
+        dirs[:2], scans_as="layers", fields=["amplitude", "het_strain"]
+    )
+    assert "scans as layers (side)" in capsys.readouterr().out
+    assert v.raw_keys() == [
+        "S101 | amplitude",
+        "S101 | het_strain",
+        "S102 | amplitude",
+        "S102 | het_strain",
+    ]
+    assert v._visible_names() == ["S101 | amplitude", "S102 | amplitude"]
+    assert v._unit_of("S102 | het_strain") == ("%", 1.0)
+    assert v._style("S102 | amplitude")["thr"] == pytest.approx(0.3)
+    t0 = v._layer_transform["S101 | amplitude"]["trans"][0]
+    t1 = v._layer_transform["S102 | amplitude"]["trans"][0]
+    assert t0 == 0 and t1 > 0
+    assert v._layer_transform["S102 | het_strain"]["trans"][0] == t1
+    v.close()
+    w = MultiVolumeViewer.from_cdiutils(
+        dirs[:2], scans_as="layers", arrange="overlay", verbose=False
+    )
+    assert not any(t["trans"][0] for t in w._layer_transform.values())
+    w.close()
+
+
+def test_sample_labels_from_folders(tmp_path):
+    d = tmp_path / "Cu_BCDI" / "S1"
+    d.mkdir(parents=True)
+    np.savez(d / "S1_structural_properties.npz", **props())
+    v = MultiVolumeViewer.from_cdiutils(
+        tmp_path, label_from="sample", verbose=False
+    )
+    assert v.cdiutils_info[0]["sample"] == "Cu_BCDI"
+    v.close()
+    r, labels, _ = loader.load(tmp_path, label_from="sample")
+    assert labels == ["Cu_BCDI S1"]
+
+
+@pytest.mark.parametrize("kind", ["cropped", "orthogonalised"])
+def test_diffraction_source(tmp_path, kind, capsys):
+    for scan in (5, 6):
+        d = tmp_path / "Cu" / f"S{scan}"
+        d.mkdir(parents=True)
+        write_preprocessed(d / f"S{scan}_preprocessed_data.cxi", scan)
+    v = MultiVolumeViewer.from_cdiutils(
+        tmp_path, source="diffraction", diffraction=kind, label_from="sample"
+    )
+    out = capsys.readouterr().out
+    # the sample name stored in the file wins over the folder name
+    assert v.raw_keys() == ["intensity"]
+    assert v._cond_labels == ["Cu_BCDI S5", "Cu_BCDI S6"]
+    a = v.dict_data["intensity"]
+    assert a.max() == pytest.approx(np.log1p(1e4), rel=1e-3)
+    if kind == "cropped":
+        assert v.unit == "index" and np.allclose(v.voxel_size, 1)
+        assert "index units" in out
+    else:
+        assert v.unit == "1/Å"
+        assert v.voxel_size[0] == pytest.approx(0.1 / 19)
+    v.close()
+
+
+def test_launcher_layers_and_diffraction(results, tmp_path):
+    root, dirs = results
+    lz = MultiVolumeViewer.launcher(root)
+    lz.scans.value = tuple(v for _, v in lz.scans.options)[:2]
+    lz.scans_as.value = "side"
+    lz.open_viewer()
+    assert lz.status.value == "", lz.status.value
+    assert "S102 | amplitude" in lz.viewer._layers
+    lz.back()
+    d = tmp_path / "diff" / "Cu" / "S5"
+    d.mkdir(parents=True)
+    write_preprocessed(d / "S5_preprocessed_data.cxi", 5)
+    lz.folder.value = str(tmp_path / "diff")
+    lz.source.value = "cropped"
+    assert len(lz.scans.options) == 1
+    lz.open_viewer()
+    assert lz.status.value == "", lz.status.value
+    assert lz.viewer.raw_keys() == ["intensity"]
+    lz.back()
+
+
+def _non_finite_widget_values(viewer):
+    """Widget traits that would break the JSON messages to the browser."""
+    import math
+
+    import ipywidgets as w
+
+    bad, seen, todo = [], set(), [viewer]
+    while todo:
+        x = todo.pop()
+        if id(x) in seen or not isinstance(x, w.Widget):
+            continue
+        seen.add(id(x))
+        for k in x.keys:
+            try:
+                val = getattr(x, k)
+            except Exception:
+                continue
+            for q in val if isinstance(val, (list, tuple)) else [val]:
+                if isinstance(q, float) and not math.isfinite(q):
+                    bad.append((type(x).__name__, x.description, k))
+                elif isinstance(q, w.Widget):
+                    todo.append(q)
+    return bad
+
+
+def test_no_nan_in_widgets(results):
+    root, dirs = results
+    for kw in ({}, {"scans_as": "layers"}):
+        v = MultiVolumeViewer.from_cdiutils(root, verbose=False, **kw)
+        v.run_actions([{"edit": v.raw_keys()[0], "color_by": "__facet__"}])
+        assert not _non_finite_widget_values(v)
+        v.close()
+
+
+def test_repeated_scan_numbers_get_unique_labels(tmp_path):
+    for sample in ("Cu_BCDI", "Cu_BCDI_0002", "Cu_BCDI_0003"):
+        d = tmp_path / sample / "S1"
+        d.mkdir(parents=True)
+        np.savez(d / "S1_structural_properties.npz", **props())
+    d = tmp_path / "Cu_BCDI_0003" / "S34"
+    d.mkdir()
+    np.savez(d / "S34_structural_properties.npz", **props())
+    r, labels, _ = loader.load(tmp_path, fields=["amplitude"])
+    assert labels == [
+        "Cu_BCDI S1",
+        "Cu_BCDI_0002 S1",
+        "Cu_BCDI_0003 S1",
+        "S34",
+    ]
+    v = MultiVolumeViewer.from_cdiutils(
+        tmp_path, scans_as="layers", fields=["amplitude"], verbose=False
+    )
+    assert len(v.raw_keys()) == 4  # nothing overwritten
+    v.close()
+    with pytest.raises(ValueError, match="unique"):
+        loader.load(tmp_path, labels=["a", "a", "b", "c"])
+
+
+def test_resample_different_voxel_sizes(tmp_path, capsys):
+    p1 = props(shape=(20, 24, 24), r=5)
+    p1["voxel_size"] = np.array([10.0, 5.0, 5.0])
+    p2 = props(shape=(40, 24, 24), r=5)
+    p2["voxel_size"] = np.array([5.0, 5.0, 5.0])
+    for scan, p in ((1, p1), (2, p2)):
+        d = tmp_path / f"S{scan}"
+        d.mkdir()
+        np.savez(d / f"S{scan}_structural_properties.npz", **p)
+    v = MultiVolumeViewer.from_cdiutils(tmp_path, scans_as="layers")
+    out = capsys.readouterr().out
+    assert "resampled (linear)" in out
+    assert np.allclose(v.voxel_size, 5)
+    assert v.dict_data["S1 | amplitude"].shape == (40, 24, 24)
+    s1 = v.get_volume("S1 | het_strain")
+    assert np.isnan(s1[0, 0, 0]) and np.isfinite(s1[20, 12, 12])
+    # side by side: true proportions
+    ar = v.fig.layout.scene.aspectratio
+    assert v.fig.layout.scene.aspectmode == "manual" and max(
+        ar.x, ar.y, ar.z
+    ) == pytest.approx(1)
+    v.close()
+    with pytest.warns(UserWarning, match="voxel sizes differ"):
+        w = MultiVolumeViewer.from_cdiutils(
+            tmp_path, resample=False, verbose=False
+        )
+    assert np.allclose(w.voxel_size, (10, 5, 5))
+    w.close()

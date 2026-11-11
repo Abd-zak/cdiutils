@@ -247,23 +247,25 @@ def _colorbars(fig_json):
     return out
 
 
-def _fit_title(fig, text, width_px):
-    """Keep a colorbar title inside the image: put a trailing "(unit)" on
-    its own line, then shrink the font if it is still too wide."""
+def _fit_title(fig, text, x0_px, x1_px):
+    """Keep a colorbar title within ``[x0_px, x1_px]`` (its column, so
+    neighbouring titles do not overlap): break it at " | " and before a
+    trailing "(unit)", then shrink the font if it is still too wide."""
     r = fig.canvas.get_renderer()
 
     def fits():
         bb = text.get_window_extent(r)
-        return bb.x0 >= 0 and bb.x1 <= width_px
+        return bb.x0 >= x0_px - 0.5 and bb.x1 <= x1_px + 0.5
 
     if fits():
         return
-    label = text.get_text()
-    if " (" in label:
+    label = text.get_text().replace(" | ", "\n")
+    if " (" in label.splitlines()[-1]:
         head, _, tail = label.rpartition(" (")
-        text.set_text(f"{head}\n({tail}")
-        text.set_multialignment("center")
-    for _ in range(8):
+        label = f"{head}\n({tail}"
+    text.set_text(label)
+    text.set_multialignment("center")
+    for _ in range(10):
         if fits():
             return
         text.set_fontsize(text.get_fontsize() * 0.85)
@@ -409,7 +411,9 @@ def render_software_png(
                 text_color,
             )
             t = cax.set_title(title, pad=6 * s, **f)
-            _fit_title(fig, t, W)
+            col = 0.15 * W  # colorbar column width
+            cx = (cax.get_position().x0 + cax.get_position().x1) / 2 * W
+            _fit_title(fig, t, max(0, cx - col / 2), min(W, cx + col / 2))
 
     for a in (
         layout.get("annotations") or []

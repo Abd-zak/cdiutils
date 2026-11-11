@@ -1675,7 +1675,12 @@ class ActionsMixin:
             import yaml
 
             path.write_text(
-                yaml.safe_dump(steps, sort_keys=False, default_flow_style=None)
+                yaml.safe_dump(
+                    steps,
+                    sort_keys=False,
+                    default_flow_style=None,
+                    allow_unicode=True,
+                )
             )
         return path
 
@@ -1733,7 +1738,12 @@ class ActionScript:
             import yaml
 
             path.write_text(
-                yaml.safe_dump(steps, sort_keys=False, default_flow_style=None)
+                yaml.safe_dump(
+                    steps,
+                    sort_keys=False,
+                    default_flow_style=None,
+                    allow_unicode=True,
+                )
             )
         return path
 

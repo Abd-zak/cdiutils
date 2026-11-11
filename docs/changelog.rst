@@ -69,6 +69,19 @@ Unreleased
   conditions (common grid, labels from scan, a parameter or given); voxel
   size, pipeline isosurface and cdiutils units (nm, %, Å, rad) are used;
   values outside the support masked; the configuration is printed first.
+* ``from_cdiutils(scans_as="layers")``: every scan as its own layers
+  (``"S1 | amplitude"``), side by side in a grid or overlaid, e.g.
+  different particles; ``source="diffraction"``: measured intensity of
+  ``S*_preprocessed_data.cxi`` (detector frame or orthogonalised q grid,
+  log/sqrt/linear); ``label_from="sample"`` (``Cu_BCDI S1``). Repeated
+  default labels (``S1`` in several samples) get the sample name. Scans
+  with different voxel sizes are resampled (linear, NaN-aware) to the
+  finest one (``resample=False`` to keep the arrays).
+* ``fit_aspect()``: true proportions sized to the view (Plotly's default
+  switches to a cube when an axis is >4x longer); used for side-by-side
+  layers.
+* Shell/core panel: "automatic" is now 0 instead of NaN (NaN values broke
+  the widget messages to the browser).
 * ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
   labels, voxel size, units, options, start script) that opens the viewer
   in its place, with *Show configuration* and *Back*.
