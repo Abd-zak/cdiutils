@@ -630,18 +630,12 @@ class AnimMixin:
                 {"x": 0, "y": 0, "z": 0},
                 None,
             )
-        scene = dict(base["layout"].get("scene") or {})
 
         def produce(k):
             R = geo.rodrigues(ax, math.radians(deg) * k / max(1, n))
-            lay = dict(
-                base["layout"],
-                scene=dict(
-                    scene,
-                    camera=self._camera_dict(R @ eye0, R @ up0, center, proj),
-                ),
-            )
-            return {"data": base["data"], "layout": lay}
+            return {
+                "camera": self._camera_dict(R @ eye0, R @ up0, center, proj)
+            }
 
         return self._launch_export(
             n,
@@ -652,6 +646,7 @@ class AnimMixin:
             "rotation",
             queue=queue,
             options=self._render_options(smooth, flat),
+            base=base,
         )
 
     def start_layer_export(
@@ -729,9 +724,7 @@ class AnimMixin:
                 info.get("empty") or info.get("valid", 1.0) < min_valid
             ):
                 return None
-            data = list(base["data"])
-            data[idx] = tr.to_plotly_json()
-            return {"data": data, "layout": base["layout"]}
+            return {"traces": {idx: tr.to_plotly_json()}}
 
         return self._launch_export(
             len(values),
@@ -742,10 +735,20 @@ class AnimMixin:
             "layer_anim",
             queue=queue,
             options=self._render_options(smooth, flat),
+            base=base,
         )
 
     def _launch_export(
-        self, n, produce, fmt, fps, name, stem, queue=False, options=None
+        self,
+        n,
+        produce,
+        fmt,
+        fps,
+        name,
+        stem,
+        queue=False,
+        options=None,
+        base=None,
     ):
         fmt = (fmt or self.anim_format.value or "mp4").lower()
         fps = int(fps or self.anim_fps.value)
@@ -762,7 +765,9 @@ class AnimMixin:
             t for t in self._export_tokens if not t["cancel"]
         ] + [token]
         self._anim_cancel = False
-        coro = self._export_coro(n, produce, out, fmt, fps, token, options)
+        coro = self._export_coro(
+            n, produce, out, fmt, fps, token, options, base
+        )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -785,7 +790,7 @@ class AnimMixin:
         return task
 
     async def _export_coro(
-        self, n, produce, out, fmt, fps, token, options=None
+        self, n, produce, out, fmt, fps, token, options=None, base=None
     ):
         t0 = time.perf_counter()
         W, H, S = (
@@ -829,6 +834,7 @@ class AnimMixin:
                     in_flight=self.render_in_flight,
                     is_cancelled=cancelled,
                     on_progress=progress,
+                    base=base,
                 )
 
             try:

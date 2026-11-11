@@ -409,7 +409,9 @@ class HelpMixin:
                 "])"
             )
             + "<p>Exports run one after the other; later steps wait. <code>rendering_mode='fast'</code> renders "
-            "frames in parallel (in a script file, put the code under <code>if __name__ == '__main__':</code>).</p>"
+            "frames in parallel; the workers stay ready between exports and stop with <code>viewer.close()</code> "
+            "(in a script file, put the code under <code>if __name__ == '__main__':</code>). "
+            "GIF and MP4 need no system ffmpeg.</p>"
         )
 
     def _help_state(self):

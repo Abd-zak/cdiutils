@@ -40,6 +40,12 @@ Unreleased
   axis padding and lighting model. Kaleido and VTK are optional and fall back
   to it when unavailable. Export options *Smooth edges* (2x rendering) and
   *Flat colours* (one colour per triangle); renderer selector in the panel.
+* Lighter exports: GIF written with Pillow and MP4 with the ffmpeg binary of
+  ``imageio-ffmpeg`` (no system ffmpeg needed). With
+  ``rendering_mode="fast"`` the render workers stay alive between exports,
+  receive the scene once per export and then only the per-frame change
+  (camera or swept layer); decoded triangles of unchanged layers are reused
+  (also in ``safe`` mode). Workers stop with ``viewer.close()``.
 
 Version 0.2.0 (Current)
 ------------------------

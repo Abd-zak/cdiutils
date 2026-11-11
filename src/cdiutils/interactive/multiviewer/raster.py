@@ -86,135 +86,135 @@ def _grid_mesh(X, Y, Z, C):
 
 def extract_primitives(fig_json):
     """Plotly figure JSON -> list of :class:`Primitive` (plot coordinates)."""
+    return [p for tr in fig_json.get("data", []) for p in extract_trace(tr)]
+
+
+def extract_trace(tr):
+    """One Plotly trace -> list of :class:`Primitive` (decoded once, reusable)."""
     prims = []
-    for tr in fig_json.get("data", []):
-        if tr.get("visible", True) is False:
-            continue
-        t = str(tr.get("type", "")).lower()
-        op = float(
-            tr.get("opacity", 1.0) if tr.get("opacity") is not None else 1.0
+    if tr.get("visible", True) is False:
+        return prims
+    t = str(tr.get("type", "")).lower()
+    op = float(
+        tr.get("opacity", 1.0) if tr.get("opacity") is not None else 1.0
+    )
+    if op <= 1e-6:
+        return prims
+    if t == "mesh3d":
+        P = np.column_stack(
+            [decode_plotly_array(tr.get(k), float) for k in "xyz"]
         )
-        if op <= 1e-6:
-            continue
-        if t == "mesh3d":
-            P = np.column_stack(
-                [decode_plotly_array(tr.get(k), float) for k in "xyz"]
-            )
-            F = np.column_stack(
-                [decode_plotly_array(tr.get(k), np.int64) for k in "ijk"]
-            )
-            if not len(P) or not len(F):
-                continue
-            cell = str(tr.get("intensitymode", "vertex")) == "cell"
-            inten = tr.get("intensity")
-            vcol = fcol = None
-            if inten is not None and len(decode_plotly_array(inten, float)):
-                vals = decode_plotly_array(inten, float).reshape(-1)
-                cols = map_colors(
-                    vals,
-                    tr.get("colorscale"),
-                    tr.get("cmin", np.nan),
-                    tr.get("cmax", np.nan),
-                )
-                if cell and len(vals) == len(F):
-                    fcol = cols
-                elif len(vals) == len(P):
-                    vcol = cols
-            if vcol is None and fcol is None:
-                vcol = np.tile(
-                    parse_color(tr.get("color", "lightgray")), (len(P), 1)
-                )
-            light = dict(MESH_LIGHT, **(tr.get("lighting") or {}))
-            lp = tr.get("lightposition") or {}
-            lpos = tuple(
-                float(lp.get(k, d)) for k, d in zip("xyz", MESH_LIGHTPOS)
-            )
-            prims.append(
-                Primitive(
-                    "tri",
-                    P,
-                    op,
-                    faces=F,
-                    vcol=vcol,
-                    fcol=fcol,
-                    light=light,
-                    lightpos=lpos,
-                    flatshading=bool(tr.get("flatshading", False)),
-                )
-            )
-        elif t == "surface":
-            Z = decode_plotly_array(tr.get("z"), float)
-            if Z.ndim != 2:
-                continue
-            X = decode_plotly_array(tr.get("x"), float)
-            Y = decode_plotly_array(tr.get("y"), float)
-            if X.ndim == 1:
-                X = np.broadcast_to(X[None, :], Z.shape)
-            if Y.ndim == 1:
-                Y = np.broadcast_to(Y[:, None], Z.shape)
-            sc = tr.get("surfacecolor")
-            C = decode_plotly_array(sc, float) if sc is not None else Z
-            pts, tris, vals = _grid_mesh(
-                X, Y, Z, C if C.shape == Z.shape else Z
-            )
-            if not len(tris):
-                continue
-            vcol = map_colors(
+        F = np.column_stack(
+            [decode_plotly_array(tr.get(k), np.int64) for k in "ijk"]
+        )
+        if not len(P) or not len(F):
+            return prims
+        cell = str(tr.get("intensitymode", "vertex")) == "cell"
+        inten = tr.get("intensity")
+        vcol = fcol = None
+        if inten is not None and len(decode_plotly_array(inten, float)):
+            vals = decode_plotly_array(inten, float).reshape(-1)
+            cols = map_colors(
                 vals,
                 tr.get("colorscale"),
                 tr.get("cmin", np.nan),
                 tr.get("cmax", np.nan),
             )
-            light = dict(SURFACE_LIGHT, **(tr.get("lighting") or {}))
-            lp = tr.get("lightposition") or {}
-            lpos = tuple(
-                float(lp.get(k, d)) for k, d in zip("xyz", SURFACE_LIGHTPOS)
+            if cell and len(vals) == len(F):
+                fcol = cols
+            elif len(vals) == len(P):
+                vcol = cols
+        if vcol is None and fcol is None:
+            vcol = np.tile(
+                parse_color(tr.get("color", "lightgray")), (len(P), 1)
             )
+        light = dict(MESH_LIGHT, **(tr.get("lighting") or {}))
+        lp = tr.get("lightposition") or {}
+        lpos = tuple(float(lp.get(k, d)) for k, d in zip("xyz", MESH_LIGHTPOS))
+        prims.append(
+            Primitive(
+                "tri",
+                P,
+                op,
+                faces=F,
+                vcol=vcol,
+                fcol=fcol,
+                light=light,
+                lightpos=lpos,
+                flatshading=bool(tr.get("flatshading", False)),
+            )
+        )
+    elif t == "surface":
+        Z = decode_plotly_array(tr.get("z"), float)
+        if Z.ndim != 2:
+            return prims
+        X = decode_plotly_array(tr.get("x"), float)
+        Y = decode_plotly_array(tr.get("y"), float)
+        if X.ndim == 1:
+            X = np.broadcast_to(X[None, :], Z.shape)
+        if Y.ndim == 1:
+            Y = np.broadcast_to(Y[:, None], Z.shape)
+        sc = tr.get("surfacecolor")
+        C = decode_plotly_array(sc, float) if sc is not None else Z
+        pts, tris, vals = _grid_mesh(X, Y, Z, C if C.shape == Z.shape else Z)
+        if not len(tris):
+            return prims
+        vcol = map_colors(
+            vals,
+            tr.get("colorscale"),
+            tr.get("cmin", np.nan),
+            tr.get("cmax", np.nan),
+        )
+        light = dict(SURFACE_LIGHT, **(tr.get("lighting") or {}))
+        lp = tr.get("lightposition") or {}
+        lpos = tuple(
+            float(lp.get(k, d)) for k, d in zip("xyz", SURFACE_LIGHTPOS)
+        )
+        prims.append(
+            Primitive(
+                "tri",
+                pts,
+                op,
+                faces=tris,
+                vcol=vcol,
+                fcol=None,
+                light=light,
+                lightpos=lpos,
+                flatshading=False,
+            )
+        )
+    elif t == "scatter3d":
+        P = np.column_stack(
+            [decode_plotly_array(tr.get(k), float) for k in "xyz"]
+        )
+        if not len(P):
+            return prims
+        mode = str(tr.get("mode", "lines+markers"))
+        if "lines" in mode:
+            line = tr.get("line") or {}
             prims.append(
                 Primitive(
-                    "tri",
-                    pts,
+                    "line",
+                    P,
                     op,
-                    faces=tris,
-                    vcol=vcol,
-                    fcol=None,
-                    light=light,
-                    lightpos=lpos,
-                    flatshading=False,
+                    color=parse_color(line.get("color", "black")),
+                    width=float(line.get("width", 2)),
                 )
             )
-        elif t == "scatter3d":
-            P = np.column_stack(
-                [decode_plotly_array(tr.get(k), float) for k in "xyz"]
+        if "markers" in mode:
+            mk = tr.get("marker") or {}
+            col = mk.get("color", "black")
+            prims.append(
+                Primitive(
+                    "point",
+                    P[np.all(np.isfinite(P), axis=1)],
+                    op,
+                    color=parse_color(
+                        col if isinstance(col, str) else "black"
+                    ),
+                    width=float(mk.get("size", 6)),
+                )
             )
-            if not len(P):
-                continue
-            mode = str(tr.get("mode", "lines+markers"))
-            if "lines" in mode:
-                line = tr.get("line") or {}
-                prims.append(
-                    Primitive(
-                        "line",
-                        P,
-                        op,
-                        color=parse_color(line.get("color", "black")),
-                        width=float(line.get("width", 2)),
-                    )
-                )
-            if "markers" in mode:
-                mk = tr.get("marker") or {}
-                col = mk.get("color", "black")
-                prims.append(
-                    Primitive(
-                        "point",
-                        P[np.all(np.isfinite(P), axis=1)],
-                        op,
-                        color=parse_color(
-                            col if isinstance(col, str) else "black"
-                        ),
-                        width=float(mk.get("size", 6)),
-                    )
-                )
     return prims
 
 
@@ -591,7 +591,12 @@ def render_scene(fig_json, width, height, smooth=False, flat=False):
     """
     layout = dict(fig_json.get("layout") or {})
     scene = dict(layout.get("scene") or {})
-    prims = extract_primitives(fig_json)
+    pre = fig_json.get("_mv_prims")  # decoded once by the export workers
+    prims = (
+        [q for ps in pre for q in ps]
+        if pre is not None
+        else extract_primitives(fig_json)
+    )
     bounds = axis_bounds(scene, prims)
     ss = 2 if smooth else 1
     W, H = int(width) * ss, int(height) * ss

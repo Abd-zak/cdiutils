@@ -9,7 +9,7 @@ Components have different optional dependencies:
 - Plotting functions: require ipywidgets, bokeh, panel
 - ThreeDViewer: requires ipywidgets, plotly, scikit-image, scipy
 - MultiVolumeViewer: requires ipywidgets, plotly, scikit-image, scipy
-  (exports: kaleido or vtk; imageio-ffmpeg for MP4, ffmpeg for GIF)
+  (exports: built-in renderer; imageio-ffmpeg for MP4; kaleido/vtk optional)
 - TabPlotData: requires ipywidgets, h5glance
 - plot_3d_isosurface: requires ipywidgets, plotly
 - VolumeViewer (PyVista): requires pyvista, trame (separate install)

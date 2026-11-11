@@ -745,6 +745,8 @@ def render_png(
             smooth=bool(opts.get("smooth", False)),
             flat=bool(opts.get("flat", False)),
         )
+    if "_mv_prims" in fig_json:
+        fig_json = {k: v for k, v in fig_json.items() if k != "_mv_prims"}
     if backend == "vtk":
         return render_fig_json_to_png_vtk(
             prepare_fig_json_for_vtk(fig_json), w, h, s, fontsize=fontsize

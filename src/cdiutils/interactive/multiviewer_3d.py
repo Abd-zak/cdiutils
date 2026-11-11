@@ -67,6 +67,7 @@ from .multiviewer.actions import (  # noqa: F401
     ActionsMixin,
 )
 from .multiviewer.anim import AnimMixin
+from .multiviewer.export import shutdown_pool
 from .multiviewer.help import HelpMixin
 from .multiviewer.rendering import resolve_backend
 from .multiviewer.tools import ToolsMixin
@@ -1800,4 +1801,8 @@ class MultiVolumeViewer(
         t = self._export_task
         if t is not None and not t.done():
             self._stop_export()
+        try:
+            shutdown_pool(wait=False)  # render workers restart on demand
+        except Exception:  # interpreter shutting down
+            pass
         super().close()
