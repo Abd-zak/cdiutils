@@ -34,7 +34,10 @@ def _html_table(rows, cols):
         + "</tr>"
         for r in rows
     )
-    return f"<table class='mv-table'><tr>{head}</tr>{body}</table>"
+    return (
+        "<div style='overflow-x:auto;max-width:100%'>"
+        f"<table class='mv-table'><tr>{head}</tr>{body}</table></div>"
+    )
 
 
 class ToolsMixin:

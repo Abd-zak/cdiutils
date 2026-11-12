@@ -65,7 +65,8 @@ CSS = """
   background: #0b1f3a !important; color: #e6eefc !important; border-color: #2f3b4d !important; }
 .mv-root.mv-dark .mv-panel .lm-TabBar-tab.lm-mod-current { background: #13294b !important; }
 .mv-table { border-collapse: collapse; font-size: 12px; }
-.mv-table td, .mv-table th { border: 1px solid rgba(127,127,127,0.4); padding: 2px 6px; text-align: right; }
+.mv-table td, .mv-table th { border: 1px solid rgba(127,127,127,0.4); padding: 2px 6px; text-align: right;
+  white-space: nowrap; }
 .mv-table th:first-child, .mv-table td:first-child { text-align: left; }
 </style>
 """

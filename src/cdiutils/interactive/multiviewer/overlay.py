@@ -247,6 +247,20 @@ def _colorbars(fig_json):
     return out
 
 
+def _fit_ticks(fig, cax, width_px):
+    """Shrink colorbar tick labels that would run past the image edge."""
+    r = fig.canvas.get_renderer()
+    for _ in range(8):
+        labels = [t for t in cax.get_yticklabels() if t.get_text()]
+        if not labels:
+            return
+        right = max(t.get_window_extent(r).x1 for t in labels)
+        if right <= width_px - 2:
+            return
+        size = labels[0].get_fontsize() * 0.88
+        cax.tick_params(labelsize=size)
+
+
 def _fit_title(fig, text, x0_px, x1_px):
     """Keep a colorbar title within ``[x0_px, x1_px]`` (its column, so
     neighbouring titles do not overlap): break it at " | " and before a
@@ -393,6 +407,7 @@ def render_software_png(
         )
         for lab in cax.get_yticklabels():
             lab.set_fontweight(tf["weight"])
+        _fit_ticks(fig, cax, W)
         outline = _rgba(
             spec.get("outlinecolor"), (*parse_color(text_color), 1)
         )
