@@ -105,6 +105,7 @@ Unreleased
   centre and field mean / std per patch; ``color_by="__patch__"``, (hkl)
   labels on the facets facing the camera, ``save_facet_csv()``, the
   ``{"patches": ...}`` action and *group by: patches* in the Analyze tab.
+* Example notebook ``examples/multivolume_viewer.ipynb`` (synthetic data).
 * ``MultiVolumeViewer.launcher(folder)``: notebook form (results, fields,
   labels, voxel size, units, options, start script) that opens the viewer
   in its place, with *Show configuration* and *Back*.
