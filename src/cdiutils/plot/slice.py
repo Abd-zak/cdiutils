@@ -149,8 +149,12 @@ def plot_volume_slices(
             ny, nx = to_plot.shape
 
             if voxel_size is not None:
-                y_coords = np.linspace(extents[plane[0]][0], extents[plane[0]][1], ny)
-                x_coords = np.linspace(extents[plane[1]][0], extents[plane[1]][1], nx)
+                y_coords = np.linspace(
+                    extents[plane[0]][0], extents[plane[0]][1], ny
+                )
+                x_coords = np.linspace(
+                    extents[plane[1]][0], extents[plane[1]][1], nx
+                )
 
                 if view_params[v]["xaxis_points_left"]:
                     x_coords = np.flip(x_coords)
@@ -184,7 +188,7 @@ def plot_volume_slices(
             axes[i].set_aspect("equal")
 
         elif plot_type == "imshow":
-            im = axes[i].imshow(to_plot, alpha=alpha,  **_plot_params)
+            im = axes[i].imshow(to_plot, alpha=alpha, **_plot_params)
             add_colorbar(axes[i], im, label_size=label_size)
 
             if voxel_size is not None:
